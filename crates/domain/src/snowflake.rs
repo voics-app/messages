@@ -19,7 +19,7 @@ const MAX_SEQUENCE: u16 = 0x0FFF;
 pub const MESSAGES_WORKER_RANGE: std::ops::RangeInclusive<u16> = 64..=127;
 
 /// A 64-bit, time-ordered identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Snowflake(u64);
 
 impl Snowflake {

@@ -1,0 +1,23 @@
+[package]
+name = "discordy-messages-application"
+description = "Use cases and ports of the Discordy messages service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+discordy-messages-domain.workspace = true
+async-trait.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
