@@ -106,16 +106,15 @@ fn murmur2(data: &[u8]) -> u32 {
     const M: u32 = 0x5bd1_e995;
     const R: u32 = 24;
     let mut h = SEED ^ data.len() as u32;
-    let mut chunks = data.chunks_exact(4);
-    for chunk in &mut chunks {
-        let mut k = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    let (chunks, tail) = data.as_chunks::<4>();
+    for chunk in chunks {
+        let mut k = u32::from_le_bytes(*chunk);
         k = k.wrapping_mul(M);
         k ^= k >> R;
         k = k.wrapping_mul(M);
         h = h.wrapping_mul(M);
         h ^= k;
     }
-    let tail = chunks.remainder();
     if tail.len() >= 3 {
         h ^= u32::from(tail[2]) << 16;
     }

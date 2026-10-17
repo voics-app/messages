@@ -35,6 +35,10 @@ pub struct S3Settings {
 pub struct S3AttachmentStorage {
     internal: Bucket,
     public: Bucket,
+    /// Path of the public CDN base URL (for example `/cdn`). The ingress strips
+    /// it before the request reaches MinIO, so it must stay outside the
+    /// signed path.
+    public_path_prefix: String,
     credentials: Credentials,
     http: reqwest::Client,
 }
@@ -45,9 +49,14 @@ impl S3AttachmentStorage {
             let url: Url = endpoint.parse().map_err(port_error)?;
             Bucket::new(url, UrlStyle::Path, settings.bucket.clone(), REGION).map_err(port_error)
         };
+        let public_url: Url = settings.public_endpoint.parse().map_err(port_error)?;
+        let public_path_prefix = public_url.path().trim_end_matches('/').to_owned();
+        let mut public_origin = public_url;
+        public_origin.set_path("/");
         Ok(Self {
             internal: bucket(&settings.internal_endpoint)?,
-            public: bucket(&settings.public_endpoint)?,
+            public: bucket(public_origin.as_str())?,
+            public_path_prefix,
             credentials: Credentials::new(settings.access_key, settings.secret_key),
             http,
         })
@@ -73,10 +82,16 @@ impl S3AttachmentStorage {
 #[async_trait]
 impl AttachmentStorage for S3AttachmentStorage {
     fn presign_upload(&self, key: &UploadKey) -> String {
-        self.public
+        // Signed against the origin alone; the CDN path prefix is added to the
+        // URL afterwards because the ingress removes it before MinIO verifies
+        // the signature.
+        let mut url = self
+            .public
             .put_object(Some(&self.credentials), &key.as_object_key())
-            .sign(UPLOAD_URL_TTL)
-            .to_string()
+            .sign(UPLOAD_URL_TTL);
+        let path = format!("{}{}", self.public_path_prefix, url.path());
+        url.set_path(&path);
+        url.to_string()
     }
 
     async fn stat(&self, key: &UploadKey) -> Result<Option<StoredObject>, PortError> {

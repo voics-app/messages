@@ -5,7 +5,9 @@ use discordy_messages_domain::{ChannelId, MessageEdit, MessageId, UserId};
 use super::MessagingPorts;
 use super::support::{announce, event, find_message, view_for};
 use crate::error::AppResult;
-use crate::ports::{ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, ReactionRepository};
+use crate::ports::{
+    ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, ReactionRepository,
+};
 use crate::views::MessageView;
 
 pub struct EditMessage {

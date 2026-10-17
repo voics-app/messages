@@ -22,7 +22,11 @@ impl ScyllaPinRepository {
     pub async fn new(session: Arc<Session>) -> Result<Self, PortError> {
         let s = session.as_ref();
         Ok(Self {
-            insert: prepare(s, "INSERT INTO pins (channel_id, message_id, pinned_at) VALUES (?, ?, ?)").await?,
+            insert: prepare(
+                s,
+                "INSERT INTO pins (channel_id, message_id, pinned_at) VALUES (?, ?, ?)",
+            )
+            .await?,
             delete: prepare(s, "DELETE FROM pins WHERE channel_id = ? AND message_id = ?").await?,
             list: prepare(s, "SELECT message_id, pinned_at FROM pins WHERE channel_id = ?").await?,
             session,
@@ -36,7 +40,11 @@ impl PinRepository for ScyllaPinRepository {
         execute(
             &self.session,
             &self.insert,
-            (id(channel_id), id(pin.message_id), CqlTimestamp(pin.pinned_at_ms as i64)),
+            (
+                id(channel_id),
+                id(pin.message_id),
+                CqlTimestamp(pin.pinned_at_ms as i64),
+            ),
         )
         .await
     }

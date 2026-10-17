@@ -41,7 +41,9 @@ async fn scylla_adapters_against_a_real_node() {
     let scylla = support::start_scylla("discordy_it").await;
     let session = Arc::clone(&scylla.session);
 
-    migrate(&session, "discordy_it").await.expect("migrations are idempotent");
+    migrate(&session, "discordy_it")
+        .await
+        .expect("migrations are idempotent");
 
     let messages = Arc::new(ScyllaMessageRepository::new(Arc::clone(&session)).await.unwrap());
     let reactions = Arc::new(ScyllaReactionRepository::new(Arc::clone(&session)).await.unwrap());
@@ -112,7 +114,10 @@ async fn bucketed_history(repo: Arc<ScyllaMessageRepository>, reactions: Arc<Scy
         })
         .await
         .unwrap();
-    assert_eq!(top.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["b3-2", "b3-1"]);
+    assert_eq!(
+        top.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+        ["b3-2", "b3-1"]
+    );
 
     let newer = repo
         .scan_bucket(BucketQuery {
@@ -124,7 +129,10 @@ async fn bucketed_history(repo: Arc<ScyllaMessageRepository>, reactions: Arc<Scy
         })
         .await
         .unwrap();
-    assert_eq!(newer.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["b0-1", "b0-2"]);
+    assert_eq!(
+        newer.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+        ["b0-1", "b0-2"]
+    );
 
     // Walk a page of 7 backwards through the real buckets (with empty
     // buckets in between) using the domain planner and the coalesced reader.
@@ -160,7 +168,9 @@ async fn last_message_id_never_regresses(repo: &ScyllaMessageRepository) {
     let newer = id_at(BUCKET_SIZE_MS * 20, 2);
     let older = id_at(BUCKET_SIZE_MS * 20, 1);
     repo.insert(&message(channel, newer, "newer")).await.unwrap();
-    repo.insert(&message(channel, older, "older, arriving late")).await.unwrap();
+    repo.insert(&message(channel, older, "older, arriving late"))
+        .await
+        .unwrap();
     assert_eq!(repo.last_message_id(channel).await.unwrap(), Some(newer));
     assert_eq!(repo.last_message_id(id_at(7, 7)).await.unwrap(), None);
 }
@@ -177,10 +187,7 @@ async fn reactions_round_trip(repo: &ScyllaReactionRepository) {
     repo.add(channel, second, &thumbs, Snowflake::new(2)).await.unwrap();
 
     assert_eq!(repo.for_message(channel, first).await.unwrap().len(), 2);
-    let range = repo
-        .for_range(channel, Bucket::of(first), first, second)
-        .await
-        .unwrap();
+    let range = repo.for_range(channel, Bucket::of(first), first, second).await.unwrap();
     assert_eq!(range.len(), 3);
 
     repo.remove(channel, first, &thumbs, Snowflake::new(1)).await.unwrap();
@@ -206,7 +213,13 @@ async fn pins_round_trip(repo: &ScyllaPinRepository) {
         .await
         .unwrap();
     }
-    let order: Vec<u64> = repo.list(channel).await.unwrap().iter().map(|p| p.message_id.value()).collect();
+    let order: Vec<u64> = repo
+        .list(channel)
+        .await
+        .unwrap()
+        .iter()
+        .map(|p| p.message_id.value())
+        .collect();
     assert_eq!(order, [2, 3, 1]);
     repo.unpin(channel, Snowflake::new(2)).await.unwrap();
     assert_eq!(repo.list(channel).await.unwrap().len(), 2);
@@ -227,7 +240,9 @@ async fn activity_counts(repo: &ScyllaActivityRepository) {
     let now_ms = DISCORDY_EPOCH_MS + 400 * 86_400_000;
     let recent = [now_ms - 1_000, now_ms - 3_600_000 * 5, now_ms - 3_600_000 * 23];
     for (i, ms) in recent.iter().enumerate() {
-        repo.record_standard_message(id_at(ms - DISCORDY_EPOCH_MS, i as u64)).await.unwrap();
+        repo.record_standard_message(id_at(ms - DISCORDY_EPOCH_MS, i as u64))
+            .await
+            .unwrap();
     }
     repo.record_standard_message(id_at(now_ms - DISCORDY_EPOCH_MS - 3_600_000 * 30, 0))
         .await

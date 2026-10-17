@@ -28,7 +28,10 @@ impl ListPins {
 
     /// Pinned messages, most recently pinned first.
     pub async fn execute(&self, channel_id: ChannelId, viewer: UserId) -> AppResult<Vec<MessageView>> {
-        self.access.access(channel_id, viewer).await?.ensure_can_read_history()?;
+        self.access
+            .access(channel_id, viewer)
+            .await?
+            .ensure_can_read_history()?;
         let pins = self.pins.list(channel_id).await?;
         let lookups = pins.iter().map(|pin| self.messages.find(channel_id, pin.message_id));
         let messages = try_join_all(lookups).await?.into_iter().flatten();

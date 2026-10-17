@@ -27,7 +27,13 @@ impl AddReaction {
     }
 
     /// Adds `user`'s reaction. Reacting twice with the same emoji is a no-op.
-    pub async fn execute(&self, channel_id: ChannelId, message_id: MessageId, emoji: Emoji, user: UserId) -> AppResult<()> {
+    pub async fn execute(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: Emoji,
+        user: UserId,
+    ) -> AppResult<()> {
         let access = self.access.access(channel_id, user).await?;
         access.ensure_can_read_history()?;
         find_message(self.messages.as_ref(), channel_id, message_id).await?;
@@ -104,7 +110,9 @@ mod tests {
             let emoji = Emoji::parse(&format!("e{i}:{i}")).unwrap();
             h.reactions.add(CHANNEL, message.id, &emoji, ALICE).await.unwrap();
         }
-        let result = AddReaction::new(&h.ports).execute(CHANNEL, message.id, thumbs(), BOB).await;
+        let result = AddReaction::new(&h.ports)
+            .execute(CHANNEL, message.id, thumbs(), BOB)
+            .await;
         assert!(matches!(result, Err(AppError::Domain(DomainError::InvalidForm(_)))));
     }
 

@@ -186,7 +186,14 @@ mod tests {
             components: vec![],
             reply_to: Some(Snowflake::new(99)),
         };
-        let mut message = Message::compose(Snowflake::new(1 << 40), Snowflake::new(5), Snowflake::new(6), draft, false).unwrap();
+        let mut message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            draft,
+            false,
+        )
+        .unwrap();
         message.edited_at_ms = Some(1_800_000_000_000);
         let row = MessageRow::from_message(&message);
         assert_eq!(row.bucket, Bucket::of(message.id).value());

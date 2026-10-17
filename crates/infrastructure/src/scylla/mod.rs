@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use discordy_messages_application::PortError;
 use futures::TryStreamExt;
-use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::statement::prepared::PreparedStatement;
 
+pub use ::scylla::client::session::Session;
 pub use activity::ScyllaActivityRepository;
 pub use messages::ScyllaMessageRepository;
 pub use migrations::migrate;

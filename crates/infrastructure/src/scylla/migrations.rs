@@ -8,10 +8,7 @@ use super::port_error;
 use discordy_messages_application::PortError;
 
 /// Embedded migrations, ordered by version.
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_initial",
-    include_str!("../../../../migrations/0001_initial.cql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[("0001_initial", include_str!("../../../../migrations/0001_initial.cql"))];
 
 /// Creates the keyspace when missing (replication factor 1: the platform
 /// runs a single ScyllaDB node), switches to it and applies pending
@@ -104,14 +101,24 @@ mod tests {
         let script = "-- header\nCREATE TABLE a (x int PRIMARY KEY);\n\n-- note\nCREATE TABLE b (y int PRIMARY KEY);\n";
         assert_eq!(
             statements(script),
-            vec!["CREATE TABLE a (x int PRIMARY KEY)", "CREATE TABLE b (y int PRIMARY KEY)"]
+            vec![
+                "CREATE TABLE a (x int PRIMARY KEY)",
+                "CREATE TABLE b (y int PRIMARY KEY)"
+            ]
         );
     }
 
     #[test]
     fn initial_migration_creates_every_table() {
         let all = statements(MIGRATIONS[0].1).join("\n");
-        for table in ["messages", "reactions", "pins", "read_states", "channel_last_message", "message_activity"] {
+        for table in [
+            "messages",
+            "reactions",
+            "pins",
+            "read_states",
+            "channel_last_message",
+            "message_activity",
+        ] {
             assert!(all.contains(&format!("CREATE TABLE IF NOT EXISTS {table} ")), "{table}");
         }
     }

@@ -113,7 +113,13 @@ pub struct InMemoryReactions {
 
 #[async_trait]
 impl ReactionRepository for InMemoryReactions {
-    async fn add(&self, channel_id: ChannelId, message_id: MessageId, emoji: &Emoji, user_id: UserId) -> Result<(), PortError> {
+    async fn add(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: &Emoji,
+        user_id: UserId,
+    ) -> Result<(), PortError> {
         let row = ReactionRow {
             message_id,
             emoji: emoji.clone(),
@@ -126,7 +132,13 @@ impl ReactionRepository for InMemoryReactions {
         Ok(())
     }
 
-    async fn remove(&self, channel_id: ChannelId, message_id: MessageId, emoji: &Emoji, user_id: UserId) -> Result<(), PortError> {
+    async fn remove(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: &Emoji,
+        user_id: UserId,
+    ) -> Result<(), PortError> {
         self.rows.lock().unwrap().retain(|(c, r)| {
             !(*c == channel_id && r.message_id == message_id && r.emoji == *emoji && r.user_id == user_id)
         });
@@ -165,7 +177,10 @@ impl ReactionRepository for InMemoryReactions {
             .unwrap()
             .iter()
             .filter(|(c, r)| {
-                *c == channel_id && Bucket::of(r.message_id) == bucket && r.message_id >= oldest && r.message_id <= newest
+                *c == channel_id
+                    && Bucket::of(r.message_id) == bucket
+                    && r.message_id >= oldest
+                    && r.message_id <= newest
             })
             .map(|(_, r)| r.clone())
             .collect())
@@ -445,5 +460,11 @@ impl Harness {
         let message = Message::compose(self.ports.ids.next_id(), CHANNEL, author, draft, false).unwrap();
         self.messages.insert(&message).await.unwrap();
         message
+    }
+}
+
+impl Default for Harness {
+    fn default() -> Self {
+        Self::new()
     }
 }

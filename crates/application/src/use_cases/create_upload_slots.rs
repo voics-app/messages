@@ -33,7 +33,12 @@ impl CreateUploadSlots {
 
     /// Issues presigned upload URLs. The returned `upload_filename` is then
     /// referenced when the message is created.
-    pub async fn execute(&self, channel_id: ChannelId, user: UserId, files: Vec<UploadRequest>) -> AppResult<Vec<UploadSlot>> {
+    pub async fn execute(
+        &self,
+        channel_id: ChannelId,
+        user: UserId,
+        files: Vec<UploadRequest>,
+    ) -> AppResult<Vec<UploadSlot>> {
         self.access.access(channel_id, user).await?.ensure_can_send(true)?;
         if files.is_empty() || files.len() > MAX_UPLOADS_PER_REQUEST {
             return Err(DomainError::invalid("files", "must contain between 1 and 10 files").into());
@@ -103,7 +108,12 @@ mod tests {
         let h = Harness::new();
         let use_case = CreateUploadSlots::new(&h.ports);
         assert!(use_case.execute(CHANNEL, ALICE, vec![]).await.is_err());
-        assert!(use_case.execute(CHANNEL, ALICE, vec![request("a", 1); 11]).await.is_err());
+        assert!(
+            use_case
+                .execute(CHANNEL, ALICE, vec![request("a", 1); 11])
+                .await
+                .is_err()
+        );
         assert!(use_case.execute(CHANNEL, ALICE, vec![request("a", 0)]).await.is_err());
     }
 }

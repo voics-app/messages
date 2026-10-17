@@ -65,7 +65,10 @@ mod tests {
         h.clock.advance_ms(1_000);
         pin.execute(CHANNEL, second.id, ALICE).await.unwrap();
 
-        UnpinMessage::new(&h.ports).execute(CHANNEL, second.id, BOB).await.unwrap();
+        UnpinMessage::new(&h.ports)
+            .execute(CHANNEL, second.id, BOB)
+            .await
+            .unwrap();
         assert!(!h.messages.find(CHANNEL, second.id).await.unwrap().unwrap().pinned);
         assert_eq!(
             h.events.kinds().last().unwrap(),

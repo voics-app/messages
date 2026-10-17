@@ -5,8 +5,13 @@ use crate::error::PortError;
 
 #[async_trait]
 pub trait ReactionRepository: Send + Sync {
-    async fn add(&self, channel_id: ChannelId, message_id: MessageId, emoji: &Emoji, user_id: UserId)
-    -> Result<(), PortError>;
+    async fn add(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: &Emoji,
+        user_id: UserId,
+    ) -> Result<(), PortError>;
 
     async fn remove(
         &self,

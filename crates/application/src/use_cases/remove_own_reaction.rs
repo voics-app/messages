@@ -25,7 +25,13 @@ impl RemoveOwnReaction {
     }
 
     /// Removes `user`'s reaction; removing one that doesn't exist is a no-op.
-    pub async fn execute(&self, channel_id: ChannelId, message_id: MessageId, emoji: Emoji, user: UserId) -> AppResult<()> {
+    pub async fn execute(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: Emoji,
+        user: UserId,
+    ) -> AppResult<()> {
         let access = self.access.access(channel_id, user).await?;
         access.ensure_can_read_history()?;
         find_message(self.messages.as_ref(), channel_id, message_id).await?;

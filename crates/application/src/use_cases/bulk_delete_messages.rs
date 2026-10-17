@@ -42,7 +42,12 @@ impl BulkDeleteMessages {
 
     /// Deletes 2–100 messages younger than two weeks. Ids that don't exist
     /// are ignored. Returns the ids actually deleted.
-    pub async fn execute(&self, channel_id: ChannelId, ids: Vec<MessageId>, actor: UserId) -> AppResult<Vec<MessageId>> {
+    pub async fn execute(
+        &self,
+        channel_id: ChannelId,
+        ids: Vec<MessageId>,
+        actor: UserId,
+    ) -> AppResult<Vec<MessageId>> {
         let access = self.access.access(channel_id, actor).await?;
         access.ensure_can_manage_messages()?;
         self.validate(&ids)?;
@@ -84,7 +89,10 @@ impl BulkDeleteMessages {
         }
         let oldest_allowed = self.clock.now_unix_ms().saturating_sub(MAX_AGE_MS);
         if ids.iter().any(|id| id.unix_millis() < oldest_allowed) {
-            return Err(DomainError::invalid("messages", "cannot delete messages older than 2 weeks"));
+            return Err(DomainError::invalid(
+                "messages",
+                "cannot delete messages older than 2 weeks",
+            ));
         }
         Ok(())
     }

@@ -8,8 +8,9 @@ pub mod ports;
 pub mod use_cases;
 pub mod views;
 
-#[cfg(test)]
-mod fakes;
+/// In-memory ports for tests of this crate and of the layers above it.
+#[cfg(any(test, feature = "test-support"))]
+pub mod fakes;
 
 pub use coalescer::Coalescer;
 pub use error::{AppError, AppResult, PortError};

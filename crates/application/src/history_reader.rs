@@ -42,14 +42,20 @@ impl HistoryReader {
     pub async fn scan_bucket(&self, query: BucketQuery) -> Shared<Vec<Message>> {
         let messages = Arc::clone(&self.messages);
         self.bucket_reads
-            .run(query, move || async move { messages.scan_bucket(query).await.map(Arc::new) })
+            .run(
+                query,
+                move || async move { messages.scan_bucket(query).await.map(Arc::new) },
+            )
             .await
     }
 
     pub async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {
         let messages = Arc::clone(&self.messages);
         self.newest_reads
-            .run(channel_id, move || async move { messages.last_message_id(channel_id).await })
+            .run(
+                channel_id,
+                move || async move { messages.last_message_id(channel_id).await },
+            )
             .await
     }
 

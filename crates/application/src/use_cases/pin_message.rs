@@ -6,7 +6,9 @@ use discordy_messages_domain::{ChannelId, DomainError, MessageId, UserId};
 use super::MessagingPorts;
 use super::support::{announce, event, find_message};
 use crate::error::AppResult;
-use crate::ports::{ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, Pin, PinRepository};
+use crate::ports::{
+    ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, Pin, PinRepository,
+};
 
 pub struct PinMessage {
     access: Arc<dyn ChannelAccessProvider>,
@@ -76,7 +78,10 @@ mod tests {
         let h = Harness::new();
         h.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
         let message = h.seed(ALICE, "rules").await;
-        PinMessage::new(&h.ports).execute(CHANNEL, message.id, ALICE).await.unwrap();
+        PinMessage::new(&h.ports)
+            .execute(CHANNEL, message.id, ALICE)
+            .await
+            .unwrap();
         assert!(h.messages.find(CHANNEL, message.id).await.unwrap().unwrap().pinned);
         assert_eq!(h.pins.list(CHANNEL).await.unwrap().len(), 1);
         assert_eq!(

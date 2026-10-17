@@ -207,7 +207,9 @@ mod tests {
         let result = CreateMessage::new(&h.ports).execute(command("secret")).await;
         assert_eq!(
             result,
-            Err(AppError::Domain(DomainError::DeliveryModeConflict(DeliveryMode::Ephemeral)))
+            Err(AppError::Domain(DomainError::DeliveryModeConflict(
+                DeliveryMode::Ephemeral
+            )))
         );
         assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
         assert!(h.events.kinds().is_empty());

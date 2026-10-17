@@ -16,15 +16,38 @@ pub struct MessageEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageEventKind {
-    Created { message: Message, nonce: Option<String> },
-    Updated { message: Message },
-    Deleted { message_id: MessageId },
-    DeletedBulk { message_ids: Vec<MessageId> },
-    ReactionAdded { message_id: MessageId, user_id: UserId, emoji: Emoji },
-    ReactionRemoved { message_id: MessageId, user_id: UserId, emoji: Emoji },
-    ReactionsCleared { message_id: MessageId },
-    PinsUpdated { last_pin_timestamp_ms: Option<u64> },
-    Acknowledged { message_id: MessageId },
+    Created {
+        message: Message,
+        nonce: Option<String>,
+    },
+    Updated {
+        message: Message,
+    },
+    Deleted {
+        message_id: MessageId,
+    },
+    DeletedBulk {
+        message_ids: Vec<MessageId>,
+    },
+    ReactionAdded {
+        message_id: MessageId,
+        user_id: UserId,
+        emoji: Emoji,
+    },
+    ReactionRemoved {
+        message_id: MessageId,
+        user_id: UserId,
+        emoji: Emoji,
+    },
+    ReactionsCleared {
+        message_id: MessageId,
+    },
+    PinsUpdated {
+        last_pin_timestamp_ms: Option<u64>,
+    },
+    Acknowledged {
+        message_id: MessageId,
+    },
 }
 
 /// Publishes domain events in the P6 envelope.

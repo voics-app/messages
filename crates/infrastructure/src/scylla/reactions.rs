@@ -64,12 +64,24 @@ fn partition(channel_id: ChannelId, message_id: MessageId) -> (i64, i32, i64) {
 
 #[async_trait]
 impl ReactionRepository for ScyllaReactionRepository {
-    async fn add(&self, channel_id: ChannelId, message_id: MessageId, emoji: &Emoji, user_id: UserId) -> Result<(), PortError> {
+    async fn add(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: &Emoji,
+        user_id: UserId,
+    ) -> Result<(), PortError> {
         let (c, b, m) = partition(channel_id, message_id);
         execute(&self.session, &self.insert, (c, b, m, emoji.key(), id(user_id))).await
     }
 
-    async fn remove(&self, channel_id: ChannelId, message_id: MessageId, emoji: &Emoji, user_id: UserId) -> Result<(), PortError> {
+    async fn remove(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: &Emoji,
+        user_id: UserId,
+    ) -> Result<(), PortError> {
         let (c, b, m) = partition(channel_id, message_id);
         execute(&self.session, &self.delete_one, (c, b, m, emoji.key(), id(user_id))).await
     }

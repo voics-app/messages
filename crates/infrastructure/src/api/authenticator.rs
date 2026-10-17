@@ -62,10 +62,7 @@ impl TokenAuthenticator {
             return Err(AuthError::Invalid);
         }
         let user_id: Snowflake = claims.sub.parse().map_err(|_| AuthError::Invalid)?;
-        Ok(Principal {
-            user_id,
-            is_bot: false,
-        })
+        Ok(Principal { user_id, is_bot: false })
     }
 
     async fn introspect(&self, token: &str) -> Result<Option<Principal>, PortError> {

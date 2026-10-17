@@ -66,7 +66,10 @@ mod tests {
         let message = h.seed(ALICE, "oops").await;
         let emoji = Emoji::parse("👍").unwrap();
         h.reactions.add(CHANNEL, message.id, &emoji, BOB).await.unwrap();
-        DeleteMessage::new(&h.ports).execute(CHANNEL, message.id, ALICE).await.unwrap();
+        DeleteMessage::new(&h.ports)
+            .execute(CHANNEL, message.id, ALICE)
+            .await
+            .unwrap();
         assert!(h.messages.find(CHANNEL, message.id).await.unwrap().is_none());
         assert!(h.reactions.for_message(CHANNEL, message.id).await.unwrap().is_empty());
         assert_eq!(
@@ -83,7 +86,10 @@ mod tests {
         assert_eq!(result, Err(AppError::Domain(DomainError::MissingPermissions)));
 
         h.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
-        DeleteMessage::new(&h.ports).execute(CHANNEL, message.id, BOB).await.unwrap();
+        DeleteMessage::new(&h.ports)
+            .execute(CHANNEL, message.id, BOB)
+            .await
+            .unwrap();
         assert!(h.messages.find(CHANNEL, message.id).await.unwrap().is_none());
     }
 }

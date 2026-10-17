@@ -33,7 +33,10 @@ impl GetMessageHistory {
         cursor: HistoryCursor,
         limit: PageLimit,
     ) -> AppResult<Vec<MessageView>> {
-        self.access.access(channel_id, viewer).await?.ensure_can_read_history()?;
+        self.access
+            .access(channel_id, viewer)
+            .await?
+            .ensure_can_read_history()?;
         let newest = self.history.last_message_id(channel_id).await?;
         let mut page = Vec::new();
         for scan in plan(cursor, limit, channel_id, newest) {
