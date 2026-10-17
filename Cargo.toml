@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/domain", "crates/application"]
+members = ["crates/domain", "crates/application", "crates/contracts"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ discordy-messages-domain = { path = "crates/domain" }
 discordy-messages-application = { path = "crates/application" }
 discordy-messages-infrastructure = { path = "crates/infrastructure" }
 discordy-messages-interface = { path = "crates/interface" }
+discordy-messages-contracts = { path = "crates/contracts" }
 
 async-trait = "0.1"
 thiserror = "2"

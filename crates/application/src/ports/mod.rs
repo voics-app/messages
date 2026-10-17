@@ -2,6 +2,7 @@
 //! infrastructure and interface crates implement them.
 
 mod activity;
+mod auth;
 mod attachments;
 mod channel_access;
 mod clock;
@@ -13,6 +14,7 @@ mod reactions;
 mod read_states;
 
 pub use activity::ActivityRepository;
+pub use auth::{AuthError, Authenticator, Principal};
 pub use attachments::{AttachmentStorage, StoredObject};
 pub use channel_access::{AccessError, ChannelAccessProvider};
 pub use clock::Clock;
