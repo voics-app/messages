@@ -109,8 +109,8 @@ fn newer(bound: MessageId, limit: usize, newest: MessageId, floor: Bucket) -> Sc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bucket::BUCKET_SIZE_MS;
     use crate::Snowflake;
+    use crate::bucket::BUCKET_SIZE_MS;
 
     /// An id in bucket `b`, `offset` ms into it.
     fn id_in(b: u64, offset: u64) -> Snowflake {
@@ -168,7 +168,12 @@ mod tests {
 
     #[test]
     fn before_a_future_id_skips_empty_recent_buckets() {
-        let scans = plan(HistoryCursor::Before(id_in(40, 0)), limit(10), channel(), Some(id_in(4, 0)));
+        let scans = plan(
+            HistoryCursor::Before(id_in(40, 0)),
+            limit(10),
+            channel(),
+            Some(id_in(4, 0)),
+        );
         assert_eq!(scans[0].buckets, buckets(&[4, 3]));
     }
 
@@ -195,7 +200,12 @@ mod tests {
 
     #[test]
     fn after_an_id_older_than_the_channel_starts_at_the_creation_bucket() {
-        let scans = plan(HistoryCursor::After(id_in(0, 0)), limit(5), channel(), Some(id_in(4, 0)));
+        let scans = plan(
+            HistoryCursor::After(id_in(0, 0)),
+            limit(5),
+            channel(),
+            Some(id_in(4, 0)),
+        );
         assert_eq!(scans[0].buckets, buckets(&[3, 4]));
     }
 

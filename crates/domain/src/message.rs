@@ -161,8 +161,8 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attachment::AttachmentFilename;
     use crate::Snowflake;
+    use crate::attachment::AttachmentFilename;
 
     const AUTHOR: Snowflake = Snowflake::new(5);
 

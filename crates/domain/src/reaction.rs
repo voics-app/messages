@@ -135,8 +135,16 @@ mod tests {
         assert_eq!(
             summary,
             vec![
-                ReactionCount { emoji: thumbs, count: 2, me: true },
-                ReactionCount { emoji: heart, count: 1, me: false },
+                ReactionCount {
+                    emoji: thumbs,
+                    count: 2,
+                    me: true
+                },
+                ReactionCount {
+                    emoji: heart,
+                    count: 1,
+                    me: false
+                },
             ]
         );
     }

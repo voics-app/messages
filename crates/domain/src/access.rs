@@ -180,7 +180,11 @@ mod tests {
             guild(VIEW | SEND).ensure_can_send(true),
             Err(DomainError::MissingPermissions)
         );
-        assert!(guild(VIEW | SEND | Permissions::ATTACH_FILES).ensure_can_send(true).is_ok());
+        assert!(
+            guild(VIEW | SEND | Permissions::ATTACH_FILES)
+                .ensure_can_send(true)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -218,15 +222,20 @@ mod tests {
             guild(VIEW).ensure_can_delete(other, author),
             Err(DomainError::MissingPermissions)
         );
-        assert!(guild(VIEW | Permissions::MANAGE_MESSAGES)
-            .ensure_can_delete(other, author)
-            .is_ok());
+        assert!(
+            guild(VIEW | Permissions::MANAGE_MESSAGES)
+                .ensure_can_delete(other, author)
+                .is_ok()
+        );
     }
 
     #[test]
     fn dms_have_no_moderators() {
         let access = dm(VIEW | Permissions::MANAGE_MESSAGES, DeliveryMode::Standard);
-        assert_eq!(access.ensure_can_manage_messages(), Err(DomainError::MissingPermissions));
+        assert_eq!(
+            access.ensure_can_manage_messages(),
+            Err(DomainError::MissingPermissions)
+        );
     }
 
     #[test]

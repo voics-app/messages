@@ -17,8 +17,7 @@ impl Mentions {
     /// allowed to use them.
     pub fn parse(content: &str, may_mention_everyone: bool) -> Self {
         let mut mentions = Self {
-            everyone: may_mention_everyone
-                && (content.contains("@everyone") || content.contains("@here")),
+            everyone: may_mention_everyone && (content.contains("@everyone") || content.contains("@here")),
             ..Self::default()
         };
         let mut rest = content;

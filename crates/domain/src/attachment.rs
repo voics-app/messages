@@ -41,7 +41,13 @@ impl AttachmentFilename {
         let name: String = raw
             .trim()
             .chars()
-            .map(|c| if c.is_alphanumeric() || "._-".contains(c) { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || "._-".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .take(MAX_FILENAME_CHARS)
             .collect();
         if name.is_empty() || name.chars().all(|c| c == '.') {
@@ -125,7 +131,10 @@ mod tests {
 
     #[test]
     fn filenames_are_sanitised() {
-        assert_eq!(AttachmentFilename::parse("cat pic.png").unwrap().as_str(), "cat_pic.png");
+        assert_eq!(
+            AttachmentFilename::parse("cat pic.png").unwrap().as_str(),
+            "cat_pic.png"
+        );
         assert_eq!(
             AttachmentFilename::parse("../../etc/passwd").unwrap().as_str(),
             ".._.._etc_passwd"
@@ -144,7 +153,10 @@ mod tests {
     fn upload_keys_round_trip() {
         let key = UploadKey::new(CHANNEL, Snowflake::new(7), AttachmentFilename::parse("a.png").unwrap());
         assert_eq!(key.as_object_key(), "attachments/42/7/a.png");
-        assert_eq!(UploadKey::parse_for_channel(&key.as_object_key(), CHANNEL).unwrap(), key);
+        assert_eq!(
+            UploadKey::parse_for_channel(&key.as_object_key(), CHANNEL).unwrap(),
+            key
+        );
     }
 
     #[test]

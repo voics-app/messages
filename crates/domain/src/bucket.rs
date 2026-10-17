@@ -56,10 +56,7 @@ mod tests {
     #[test]
     fn bucket_boundaries_are_every_ten_days() {
         assert_eq!(Bucket::of(id_at_epoch_ms(BUCKET_SIZE_MS)), Bucket::new(1));
-        assert_eq!(
-            Bucket::of(id_at_epoch_ms(BUCKET_SIZE_MS * 37 + 5)),
-            Bucket::new(37)
-        );
+        assert_eq!(Bucket::of(id_at_epoch_ms(BUCKET_SIZE_MS * 37 + 5)), Bucket::new(37));
     }
 
     #[test]

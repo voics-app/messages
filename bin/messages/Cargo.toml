@@ -1,0 +1,28 @@
+[package]
+name = "discordy-messages"
+description = "Discordy messages service: composition root and entry point"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "messages"
+path = "src/main.rs"
+
+[dependencies]
+discordy-messages-domain.workspace = true
+discordy-messages-application.workspace = true
+discordy-messages-infrastructure.workspace = true
+discordy-messages-interface.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[lints]
+workspace = true
