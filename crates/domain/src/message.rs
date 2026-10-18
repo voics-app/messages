@@ -3,6 +3,7 @@
 use crate::attachment::{Attachment, MAX_ATTACHMENTS_PER_MESSAGE};
 use crate::error::{DomainError, FieldError};
 use crate::mentions::Mentions;
+use crate::message_origin::{InteractionLink, WebhookAuthor};
 use crate::{ChannelId, MessageId, UserId};
 
 /// Maximum content length in characters (Discord parity).
@@ -42,6 +43,9 @@ pub struct MessageDraft {
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
+    pub flags: u32,
+    pub webhook: Option<WebhookAuthor>,
+    pub interaction: Option<InteractionLink>,
 }
 
 /// A partial update; `None` leaves the field unchanged.
@@ -63,6 +67,8 @@ pub struct Message {
     pub components: Vec<String>,
     pub mentions: Mentions,
     pub reply_to: Option<MessageId>,
+    pub webhook: Option<WebhookAuthor>,
+    pub interaction: Option<InteractionLink>,
     pub flags: u32,
     pub edited_at_ms: Option<u64>,
     pub pinned: bool,
@@ -91,7 +97,9 @@ impl Message {
             embeds: draft.embeds,
             components: draft.components,
             reply_to: draft.reply_to,
-            flags: 0,
+            flags: draft.flags,
+            webhook: draft.webhook,
+            interaction: draft.interaction,
             edited_at_ms: None,
             pinned: false,
         };
@@ -265,6 +273,34 @@ mod tests {
         assert!(message.apply_edit(AUTHOR, edit, false, 1).is_err());
         assert_eq!(message.content, "hi");
         assert_eq!(message.edited_at_ms, None);
+    }
+
+    #[test]
+    fn webhook_and_interaction_origins_are_kept() {
+        let mut d = draft("from a webhook");
+        d.webhook = Some(WebhookAuthor {
+            webhook_id: Snowflake::new(40),
+            username: Some("Relay".into()),
+            avatar_url: None,
+        });
+        d.interaction = Some(InteractionLink {
+            interaction_id: Snowflake::new(41),
+            application_id: Snowflake::new(42),
+        });
+        d.flags = 4;
+        let message = compose(d).unwrap();
+        assert_eq!(message.webhook.as_ref().unwrap().webhook_id, Snowflake::new(40));
+        assert_eq!(message.webhook.as_ref().unwrap().username.as_deref(), Some("Relay"));
+        assert_eq!(message.interaction.unwrap().application_id, Snowflake::new(42));
+        assert_eq!(message.flags, 4);
+    }
+
+    #[test]
+    fn plain_messages_have_no_origin_metadata() {
+        let message = compose(draft("hi")).unwrap();
+        assert_eq!(message.webhook, None);
+        assert_eq!(message.interaction, None);
+        assert_eq!(message.flags, 0);
     }
 
     #[test]
