@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use discordy_messages_domain::WorkerId;
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8082";
+const DEFAULT_CORS_ALLOWED_ORIGINS: &str = "null,http://localhost:5173";
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid configuration:\n  - {}", .0.join("\n  - "))]
@@ -28,6 +29,8 @@ pub struct Config {
     pub minio_secret_key: String,
     pub attachments_bucket: String,
     pub cdn_public_url: String,
+    /// Origins allowed by CORS; `null` is the origin of the packaged `file://` client.
+    pub cors_allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +75,7 @@ impl Config {
             minio_secret_key: reader.required("MINIO_SECRET_KEY"),
             attachments_bucket: reader.optional("MINIO_BUCKET_ATTACHMENTS", "discordy-attachments"),
             cdn_public_url: reader.url("CDN_PUBLIC_URL"),
+            cors_allowed_origins: reader.origins("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS),
         };
         if reader.problems.is_empty() {
             Ok(config)
@@ -120,6 +124,15 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             self.problem(format!("{name} must list at least one host:port"));
         }
         items
+    }
+
+    fn origins(&self, name: &str, default: &str) -> Vec<String> {
+        self.optional(name, default)
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned)
+            .collect()
     }
 
     fn url(&mut self, name: &str) -> String {
@@ -206,6 +219,23 @@ mod tests {
         assert!(message.contains("INTERNAL_SERVICE_TOKEN is required"));
         assert!(message.contains("SNOWFLAKE_WORKER_ID must be an integer from 64 to 127"));
         assert!(message.contains("CDN_PUBLIC_URL must be an http(s) URL"));
+    }
+
+    #[test]
+    fn cors_origins_default_to_the_packaged_client_and_dev_server() {
+        let config = load(&complete()).unwrap();
+        assert_eq!(config.cors_allowed_origins, vec!["null", "http://localhost:5173"]);
+    }
+
+    #[test]
+    fn cors_origins_are_parsed_from_a_comma_list() {
+        let mut vars = complete();
+        vars.insert("CORS_ALLOWED_ORIGINS", " https://app.discordy.example , null ,");
+        let config = load(&vars).unwrap();
+        assert_eq!(
+            config.cors_allowed_origins,
+            vec!["https://app.discordy.example", "null"]
+        );
     }
 
     #[test]

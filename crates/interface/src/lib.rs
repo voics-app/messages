@@ -2,6 +2,7 @@
 //! (public REST and internal API) and the event-bus envelope encoder.
 
 pub mod attachment_urls;
+pub mod cors;
 pub mod dto;
 pub mod envelope;
 pub mod error;

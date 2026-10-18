@@ -720,9 +720,11 @@ dependencies = [
  "serde",
  "serde_json",
  "subtle",
+ "thiserror 2.0.21",
  "time",
  "tokio",
  "tower",
+ "tower-http",
  "tracing",
  "uuid",
 ]
