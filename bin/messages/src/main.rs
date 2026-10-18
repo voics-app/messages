@@ -19,6 +19,7 @@ use discordy_messages_infrastructure::scylla::{
 };
 use discordy_messages_infrastructure::storage::{S3AttachmentStorage, S3Settings};
 use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
+use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
 use probes::{KafkaProbe, ScyllaProbe};
 use tracing_subscriber::EnvFilter;
@@ -61,6 +62,8 @@ enum StartupError {
     HttpClient(#[from] reqwest::Error),
     #[error("listener: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Cors(#[from] InvalidOrigin),
 }
 
 async fn run(config: Config) -> Result<(), StartupError> {
@@ -110,9 +113,10 @@ async fn run(config: Config) -> Result<(), StartupError> {
         probes,
     );
 
+    let cors = cors::layer(&config.cors_allowed_origins)?;
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, worker = config.worker.value(), "messages service listening");
-    axum::serve(listener, router(state))
+    axum::serve(listener, router(state).layer(cors))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     tracing::info!("messages service stopped gracefully");
