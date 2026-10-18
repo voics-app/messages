@@ -277,6 +277,8 @@ impl ActivityRepository for InMemoryActivity {
 
 pub struct FakeAccess {
     pub access: Mutex<Result<ChannelAccess, AccessError>>,
+    /// The answer for user-less lookups (webhook posts).
+    pub channel: Mutex<Result<ChannelAccess, AccessError>>,
 }
 
 impl FakeAccess {
@@ -286,7 +288,9 @@ impl FakeAccess {
         }
     }
 
+    /// Sets both the member and the user-less answer.
     pub fn set(&self, access: Result<ChannelAccess, AccessError>) {
+        *self.channel.lock().unwrap() = access.clone();
         *self.access.lock().unwrap() = access;
     }
 }
@@ -295,6 +299,10 @@ impl FakeAccess {
 impl ChannelAccessProvider for FakeAccess {
     async fn access(&self, _channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
         self.access.lock().unwrap().clone()
+    }
+
+    async fn channel(&self, _channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {
+        self.channel.lock().unwrap().clone()
     }
 }
 
@@ -413,6 +421,7 @@ impl Harness {
     pub fn new() -> Self {
         let access = Arc::new(FakeAccess {
             access: Mutex::new(Ok(guild_access(MEMBER))),
+            channel: Mutex::new(Ok(guild_access(MEMBER))),
         });
         let messages = Arc::new(InMemoryMessages::default());
         let reactions = Arc::new(InMemoryReactions::default());

@@ -5,7 +5,8 @@ use axum::extract::State;
 use contracts::{
     AdminStatsResponse, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto,
 };
-use discordy_messages_application::use_cases::CreateMessageCommand;
+use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
+use discordy_messages_domain::{InteractionLink, WebhookAuthor};
 
 use crate::dto::{read_state_dto, view_dto};
 use crate::error::ApiError;
@@ -19,16 +20,68 @@ pub async fn create_message(
     ApiPath(Id(channel_id)): ApiPath<Id>,
     ApiJson(body): ApiJson<InternalCreateMessageRequest>,
 ) -> Result<Json<MessageDto>, ApiError> {
-    let command = CreateMessageCommand {
-        channel_id,
-        author_id: parse_id("author_id", &body.author_id)?,
-        content: body.content.unwrap_or_default(),
-        embeds: json_texts(body.embeds),
-        components: json_texts(body.components),
-        ..CreateMessageCommand::default()
-    };
+    let command = internal_command(channel_id, body)?;
     let view = state.use_cases.create_message.execute_internal(command).await?;
     Ok(Json(view_dto(&view, &state.urls)))
+}
+
+fn internal_command(
+    channel_id: discordy_messages_domain::ChannelId,
+    body: InternalCreateMessageRequest,
+) -> Result<CreateMessageCommand, ApiError> {
+    let author_id = parse_id("author_id", &body.author_id)?;
+    let webhook = match body.webhook_id {
+        Some(raw) => Some(WebhookAuthor {
+            webhook_id: parse_id("webhook_id", &raw)?,
+            username: body.username,
+            avatar_url: body.avatar_url,
+        }),
+        None => None,
+    };
+    let interaction = match (body.interaction_id, body.application_id) {
+        (Some(interaction), Some(application)) => Some(InteractionLink {
+            interaction_id: parse_id("interaction_id", &interaction)?,
+            application_id: parse_id("application_id", &application)?,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(ApiError::invalid(
+                "application_id",
+                "interaction_id and application_id go together",
+            ));
+        }
+    };
+    let reply_to = body
+        .message_reference
+        .map(|reference| parse_id("message_reference", &reference.message_id))
+        .transpose()?;
+    let target_user_ids = body
+        .target_user_ids
+        .unwrap_or_default()
+        .iter()
+        .map(|raw| parse_id("target_user_ids", raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CreateMessageCommand {
+        channel_id,
+        author_id,
+        content: body.content.unwrap_or_default(),
+        attachments: body
+            .attachments
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| AttachmentReference {
+                uploaded_filename: a.uploaded_filename,
+            })
+            .collect(),
+        embeds: json_texts(body.embeds),
+        components: json_texts(body.components),
+        reply_to,
+        flags: body.flags.unwrap_or(0),
+        webhook,
+        interaction,
+        target_user_ids,
+        ..CreateMessageCommand::default()
+    })
 }
 
 pub async fn last_message_id(

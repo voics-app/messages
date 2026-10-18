@@ -89,6 +89,27 @@ pub struct MessageDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_reference: Option<MessageReferenceDto>,
     pub components: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub webhook_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub application_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub interaction_metadata: Option<InteractionMetadataDto>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub author_override: Option<AuthorOverrideDto>,
+}
+
+/// The interaction a message answers (Discord's `interaction_metadata`, id only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionMetadataDto {
+    pub id: String,
+}
+
+/// Webhook display overrides applied to a message's author.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorOverrideDto {
+    pub username: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,19 +243,49 @@ pub struct ChannelAccessResponse {
     pub recipient_ids: Vec<String>,
 }
 
+/// api: `GET /internal/v1/channels/{channel_id}/delivery`. The channel's guild
+/// and delivery mode without a user, for webhook posts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelRoutingResponse {
+    pub guild_id: Option<String>,
+    pub channel_type: u8,
+    pub delivery_mode: String,
+    #[serde(default)]
+    pub recipient_ids: Vec<String>,
+}
+
 /// api: `POST /internal/v1/channels/{channel_id}/messages`. Bot, webhook and
-/// interaction messages. `author_id` is the bot user the message is posted as.
-/// Other fields api sends (username, webhook_id, interaction_id, ...) are not
-/// stored: the message model has no place for them.
+/// interaction messages. `author_id` is the bot user the message is posted as,
+/// or the webhook id for webhook posts. `flags & 64` (ephemeral) messages go
+/// only to `target_user_ids` and are never stored.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalCreateMessageRequest {
     pub author_id: String,
+    #[serde(default)]
+    pub webhook_id: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub interaction_id: Option<String>,
+    #[serde(default)]
+    pub application_id: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
     #[serde(default)]
     pub embeds: Option<Vec<Value>>,
     #[serde(default)]
     pub components: Option<Vec<Value>>,
+    #[serde(default)]
+    pub flags: Option<u32>,
+    #[serde(default)]
+    pub message_reference: Option<MessageReferenceRequest>,
+    #[serde(default)]
+    pub attachments: Option<Vec<AttachmentReferenceDto>>,
+    /// Recipients of an ephemeral message (the invoking user).
+    #[serde(default)]
+    pub target_user_ids: Option<Vec<String>>,
 }
 
 /// api: `POST /internal/v1/auth/introspect`.

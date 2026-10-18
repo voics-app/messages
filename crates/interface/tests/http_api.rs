@@ -7,9 +7,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use discordy_messages_application::PortError;
-use discordy_messages_application::fakes::{ALICE, BOB, CHANNEL, Harness, MEMBER, dm_access};
-use discordy_messages_application::ports::{AuthError, Authenticator, Principal};
-use discordy_messages_domain::{DeliveryMode, Permissions};
+use discordy_messages_application::fakes::{ALICE, BOB, CHANNEL, Harness, MEMBER, dm_access, guild_access};
+use discordy_messages_application::ports::{AccessError, AuthError, Authenticator, MessageRepository, Principal};
+use discordy_messages_domain::{Audience, DeliveryMode, Permissions};
 use discordy_messages_interface::{AppState, AttachmentUrls, InternalToken, ReadinessCheck, router};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -328,6 +328,88 @@ async fn internal_create_refuses_non_standard_delivery_and_bad_bodies() {
 
     let (status, body) = post_internal(&app, &uri, Some(INTERNAL), json!({"content": "no author"})).await;
     assert_eq!((status, body["code"].as_u64()), (StatusCode::BAD_REQUEST, Some(50035)));
+}
+
+#[tokio::test]
+async fn internal_webhook_posts_are_authored_by_the_webhook_with_overrides() {
+    let harness = Harness::new();
+    harness.access.set(Err(AccessError::NotMember));
+    *harness.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, created) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": "900", "webhook_id": "900", "username": "Relay",
+               "avatar_url": "https://cdn.test/a.png", "content": "relayed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["author"]["id"], "900");
+    assert_eq!(created["webhook_id"], "900");
+    assert_eq!(created["author_override"]["username"], "Relay");
+    assert_eq!(created["author_override"]["avatar_url"], "https://cdn.test/a.png");
+}
+
+#[tokio::test]
+async fn internal_interaction_responses_link_their_interaction() {
+    let harness = Harness::new();
+    harness.access.set_permissions(Permissions::VIEW_CHANNEL);
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, created) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "interaction_id": "31", "application_id": "32",
+               "content": "answer"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["interaction_metadata"]["id"], "31");
+    assert_eq!(created["application_id"], "32");
+    assert!(created.get("webhook_id").is_none());
+}
+
+#[tokio::test]
+async fn internal_ephemeral_replies_go_to_the_invoker_and_are_not_stored() {
+    let harness = Harness::new();
+    harness.access.set_permissions(Permissions::VIEW_CHANNEL);
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, body) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "only you", "flags": 64}),
+    )
+    .await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::BAD_REQUEST, Some(50035)));
+
+    let (status, created) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "only you", "flags": 64,
+               "target_user_ids": [ALICE.to_string()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["flags"], 64);
+    let audiences: Vec<_> = harness
+        .events
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|e| e.audience.clone())
+        .collect();
+    assert_eq!(audiences, vec![Audience::Users(vec![ALICE])]);
+    assert_eq!(harness.messages.last_message_id(CHANNEL).await.unwrap(), None);
 }
 
 #[tokio::test]

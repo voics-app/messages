@@ -99,6 +99,10 @@ pub async fn create(
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,
+        flags: 0,
+        webhook: None,
+        interaction: None,
+        target_user_ids: Vec::new(),
     };
     let view = state.use_cases.create_message.execute(command).await?;
     Ok(Json(view_dto(&view, &state.urls)))

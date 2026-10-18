@@ -28,4 +28,8 @@ impl From<AccessError> for AppError {
 #[async_trait]
 pub trait ChannelAccessProvider: Send + Sync {
     async fn access(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError>;
+
+    /// The channel's guild and delivery mode, without any user: for posts
+    /// made by webhooks, which are not members. The permissions are empty.
+    async fn channel(&self, channel_id: ChannelId) -> Result<ChannelAccess, AccessError>;
 }

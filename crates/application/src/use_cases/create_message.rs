@@ -3,15 +3,16 @@ use std::sync::Arc;
 
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::{
-    Attachment, ChannelAccess, ChannelId, DomainError, Message, MessageDraft, MessageId, ReadState, UploadKey, UserId,
+    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, InteractionLink, Message,
+    MessageDraft, MessageId, ReadState, UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
 use super::support::{announce, event};
 use crate::error::AppResult;
 use crate::ports::{
-    ActivityRepository, AttachmentStorage, ChannelAccessProvider, EventPublisher, IdGenerator, MessageEventKind,
-    MessageRepository, ReadStateRepository,
+    ActivityRepository, AttachmentStorage, ChannelAccessProvider, EventPublisher, IdGenerator, MessageEvent,
+    MessageEventKind, MessageRepository, ReadStateRepository,
 };
 use crate::views::MessageView;
 
@@ -31,6 +32,14 @@ pub struct CreateMessageCommand {
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
+    /// Discord message flags (internal posts only; `FLAG_EPHEMERAL` relays).
+    pub flags: u32,
+    /// Set for webhook posts; `author_id` is then the webhook id.
+    pub webhook: Option<WebhookAuthor>,
+    /// Set for interaction responses.
+    pub interaction: Option<InteractionLink>,
+    /// Recipients of an ephemeral message. Only these users receive it.
+    pub target_user_ids: Vec<UserId>,
 }
 
 pub struct CreateMessage {
@@ -59,52 +68,89 @@ impl CreateMessage {
     pub async fn execute(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
         let access = self.access.access(command.channel_id, command.author_id).await?;
         access.ensure_can_send(!command.attachments.is_empty())?;
-        self.store(access, command).await
+        self.store(&access, command).await
     }
 
     /// Posts on behalf of a bot, webhook or interaction. api has already
     /// authorised the call, so the user permission check is skipped; the
-    /// delivery mode is still enforced.
+    /// delivery mode is still enforced. A webhook is not a guild member, so
+    /// its channel is resolved without a user.
     pub async fn execute_internal(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
-        let access = self.access.access(command.channel_id, command.author_id).await?;
+        let access = match command.webhook {
+            Some(_) => self.access.channel(command.channel_id).await?,
+            None => self.access.access(command.channel_id, command.author_id).await?,
+        };
         access.ensure_standard_delivery()?;
-        self.store(access, command).await
+        if command.flags & FLAG_EPHEMERAL != 0 {
+            return self.relay_ephemeral(&access, command).await;
+        }
+        self.store(&access, command).await
     }
 
-    async fn store(&self, access: ChannelAccess, command: CreateMessageCommand) -> AppResult<MessageView> {
+    async fn store(&self, access: &ChannelAccess, command: CreateMessageCommand) -> AppResult<MessageView> {
         let channel_id = command.channel_id;
-        if let Some(reply_to) = command.reply_to {
-            self.ensure_reply_target_exists(channel_id, reply_to).await?;
-        }
-        let draft = MessageDraft {
-            content: command.content,
-            attachments: self.resolve_attachments(channel_id, &command.attachments).await?,
-            embeds: command.embeds,
-            components: command.components,
-            reply_to: command.reply_to,
-        };
-        let message = Message::compose(
-            self.ids.next_id(),
-            channel_id,
-            command.author_id,
-            draft,
-            access.may_mention_everyone(),
-        )?;
+        let nonce = command.nonce.clone();
+        let message = self.compose_message(access, &command).await?;
         self.messages.insert(&message).await?;
         self.record_side_effects(&message).await;
         announce(
             self.events.as_ref(),
             event(
-                &access,
+                access,
                 channel_id,
                 MessageEventKind::Created {
                     message: message.clone(),
-                    nonce: command.nonce,
+                    nonce,
                 },
             ),
         )
         .await;
         Ok(MessageView::without_reactions(message))
+    }
+
+    /// Ephemeral replies reach only their targets and are never stored, so
+    /// they leave no trace in ScyllaDB, read states or activity counters.
+    async fn relay_ephemeral(&self, access: &ChannelAccess, command: CreateMessageCommand) -> AppResult<MessageView> {
+        if command.target_user_ids.is_empty() {
+            return Err(DomainError::invalid("target_user_ids", "required for ephemeral messages").into());
+        }
+        let message = self.compose_message(access, &command).await?;
+        let event = MessageEvent {
+            channel_id: command.channel_id,
+            guild_id: access.guild_id,
+            audience: Audience::Users(command.target_user_ids),
+            kind: MessageEventKind::Created {
+                message: message.clone(),
+                nonce: command.nonce,
+            },
+        };
+        announce(self.events.as_ref(), event).await;
+        Ok(MessageView::without_reactions(message))
+    }
+
+    async fn compose_message(&self, access: &ChannelAccess, command: &CreateMessageCommand) -> AppResult<Message> {
+        if let Some(reply_to) = command.reply_to {
+            self.ensure_reply_target_exists(command.channel_id, reply_to).await?;
+        }
+        let draft = MessageDraft {
+            content: command.content.clone(),
+            attachments: self
+                .resolve_attachments(command.channel_id, &command.attachments)
+                .await?,
+            embeds: command.embeds.clone(),
+            components: command.components.clone(),
+            reply_to: command.reply_to,
+            flags: command.flags,
+            webhook: command.webhook.clone(),
+            interaction: command.interaction,
+        };
+        Ok(Message::compose(
+            self.ids.next_id(),
+            command.channel_id,
+            command.author_id,
+            draft,
+            access.may_mention_everyone(),
+        )?)
     }
 
     async fn ensure_reply_target_exists(&self, channel_id: ChannelId, reply_to: MessageId) -> AppResult<()> {
@@ -176,7 +222,8 @@ mod tests {
     use super::*;
     use crate::error::AppError;
     use crate::fakes::*;
-    use discordy_messages_domain::{Audience, DeliveryMode, Permissions};
+    use crate::ports::AccessError;
+    use discordy_messages_domain::{Audience, DeliveryMode, Permissions, Snowflake};
 
     fn command(content: &str) -> CreateMessageCommand {
         CreateMessageCommand {
@@ -185,6 +232,14 @@ mod tests {
             content: content.to_owned(),
             nonce: Some("n-1".into()),
             ..CreateMessageCommand::default()
+        }
+    }
+
+    fn ephemeral_reply(targets: Vec<UserId>) -> CreateMessageCommand {
+        CreateMessageCommand {
+            flags: FLAG_EPHEMERAL,
+            target_user_ids: targets,
+            ..command("only you")
         }
     }
 
@@ -255,13 +310,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dm_events_target_the_recipients() {
+    async fn webhook_posts_are_authored_by_the_webhook_without_a_member_check() {
         let h = Harness::new();
-        h.access.set(Ok(dm_access(DeliveryMode::Standard)));
-        CreateMessage::new(&h.ports).execute(command("yo")).await.unwrap();
+        h.access.set(Err(AccessError::NotMember));
+        *h.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+        let hook = Snowflake::new(900);
+        let mut cmd = command("relayed");
+        cmd.author_id = hook;
+        cmd.webhook = Some(WebhookAuthor {
+            webhook_id: hook,
+            username: Some("Relay".into()),
+            avatar_url: None,
+        });
+        let view = CreateMessage::new(&h.ports).execute_internal(cmd).await.unwrap();
+        assert_eq!(view.message.author_id, hook);
+        assert_eq!(view.message.webhook.unwrap().username.as_deref(), Some("Relay"));
+        assert!(h.messages.find(CHANNEL, view.message.id).await.unwrap().is_some());
+        assert_eq!(h.events.events.lock().unwrap()[0].audience, Audience::Guild(GUILD));
+    }
+
+    #[tokio::test]
+    async fn ephemeral_replies_reach_only_their_targets_and_are_never_stored() {
+        let h = Harness::new();
+        let view = CreateMessage::new(&h.ports)
+            .execute_internal(ephemeral_reply(vec![BOB]))
+            .await
+            .unwrap();
+        assert_eq!(view.message.flags, FLAG_EPHEMERAL);
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+        assert!(h.messages.find(CHANNEL, view.message.id).await.unwrap().is_none());
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
         let events = h.events.events.lock().unwrap();
-        assert_eq!(events[0].audience, Audience::Users(vec![ALICE, BOB]));
-        assert_eq!(events[0].guild_id, None);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].audience, Audience::Users(vec![BOB]));
+        assert_eq!(events[0].guild_id, Some(GUILD));
+    }
+
+    #[tokio::test]
+    async fn ephemeral_replies_need_a_target() {
+        let h = Harness::new();
+        let result = CreateMessage::new(&h.ports)
+            .execute_internal(ephemeral_reply(vec![]))
+            .await;
+        assert!(matches!(result, Err(AppError::Domain(DomainError::InvalidForm(_)))));
+        assert!(h.events.kinds().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ephemeral_replies_in_non_standard_channels_conflict() {
+        let h = Harness::new();
+        h.access.set(Ok(dm_access(DeliveryMode::P2p)));
+        let result = CreateMessage::new(&h.ports)
+            .execute_internal(ephemeral_reply(vec![BOB]))
+            .await;
+        assert_eq!(
+            result,
+            Err(AppError::Domain(DomainError::DeliveryModeConflict(DeliveryMode::P2p)))
+        );
+    }
+
+    #[tokio::test]
+    async fn interaction_links_are_kept_on_stored_messages() {
+        let h = Harness::new();
+        let link = InteractionLink {
+            interaction_id: Snowflake::new(31),
+            application_id: Snowflake::new(32),
+        };
+        let mut cmd = command("answer");
+        cmd.interaction = Some(link);
+        let view = CreateMessage::new(&h.ports).execute_internal(cmd).await.unwrap();
+        let stored = h.messages.find(CHANNEL, view.message.id).await.unwrap().unwrap();
+        assert_eq!(stored.interaction, Some(link));
     }
 
     #[tokio::test]
