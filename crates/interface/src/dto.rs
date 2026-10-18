@@ -1,6 +1,9 @@
 //! Mapping between domain objects and the wire contracts.
 
-use contracts::{AttachmentDto, EmojiDto, MessageDto, MessageReferenceDto, ReactionDto, ReadStateDto, UserRef};
+use contracts::{
+    AttachmentDto, AuthorOverrideDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto, ReactionDto,
+    ReadStateDto, UserRef,
+};
 use discordy_messages_application::MessageView;
 use discordy_messages_domain::{Attachment, ChannelId, Emoji, GuildId, Message, ReactionCount, ReadState};
 use serde_json::Value;
@@ -101,6 +104,19 @@ pub fn message_dto(
             guild_id: guild_id.map(|g| g.to_string()),
         }),
         components: json_values(&message.components),
+        webhook_id: message.webhook.as_ref().map(|w| w.webhook_id.to_string()),
+        application_id: message.interaction.map(|i| i.application_id.to_string()),
+        interaction_metadata: message.interaction.map(|i| InteractionMetadataDto {
+            id: i.interaction_id.to_string(),
+        }),
+        author_override: message
+            .webhook
+            .as_ref()
+            .filter(|w| w.username.is_some() || w.avatar_url.is_some())
+            .map(|w| AuthorOverrideDto {
+                username: w.username.clone(),
+                avatar_url: w.avatar_url.clone(),
+            }),
     }
 }
 
