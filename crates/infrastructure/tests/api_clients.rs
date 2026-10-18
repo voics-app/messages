@@ -10,9 +10,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use discordy_messages_application::ports::{AccessError, AuthError, Authenticator, ChannelAccessProvider};
+use discordy_messages_application::ports::{
+    AccessError, AuthError, Authenticator, ChannelAccessProvider, UserDirectory,
+};
 use discordy_messages_domain::{DeliveryMode, Permissions, Snowflake};
-use discordy_messages_infrastructure::api::{HttpChannelAccess, InternalApi, TokenAuthenticator};
+use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::{Value, json};
 
@@ -29,6 +31,7 @@ const TOKEN: &str = "stub-internal-token";
 struct Calls {
     access: AtomicUsize,
     introspect: AtomicUsize,
+    users: AtomicUsize,
 }
 
 type Stub = Arc<Calls>;
@@ -108,12 +111,34 @@ async fn introspect(State(calls): State<Stub>, headers: HeaderMap, Json(body): J
     }
 }
 
+async fn users_lookup(State(calls): State<Stub>, headers: HeaderMap, Json(body): Json<Value>) -> impl IntoResponse {
+    calls.users.fetch_add(1, Ordering::SeqCst);
+    if !authorised(&headers) {
+        return (StatusCode::UNAUTHORIZED, Json(Value::Null));
+    }
+    let ids = body["ids"].as_array().cloned().unwrap_or_default();
+    if ids.iter().any(|id| id == "666") {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(Value::Null));
+    }
+    let known: Vec<Value> = ids
+        .iter()
+        .filter(|id| *id == "10" || *id == "11")
+        .map(|id| {
+            json!({"id": id, "username": format!("user{}", id.as_str().unwrap()), "discriminator": "0",
+                   "global_name": null, "avatar": "hash", "bot": false, "system": false,
+                   "flags": 0, "public_flags": 0})
+        })
+        .collect();
+    (StatusCode::OK, Json(Value::Array(known)))
+}
+
 async fn start_stub() -> (InternalApi, Stub) {
     let calls = Stub::default();
     let app = Router::new()
         .route("/internal/v1/channels/{channel}/access/{user}", get(access))
         .route("/internal/v1/channels/{channel}/delivery", get(delivery))
         .route("/internal/v1/auth/introspect", post(introspect))
+        .route("/internal/v1/users/lookup", post(users_lookup))
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
@@ -245,5 +270,48 @@ async fn bot_tokens_are_introspected_and_cached() {
     assert_eq!(
         auth.authenticate("Bot 12.revoked").await.unwrap_err(),
         AuthError::Invalid
+    );
+}
+
+#[tokio::test]
+async fn users_are_looked_up_in_one_batch_and_cached() {
+    let (api, calls) = start_stub().await;
+    let directory = HttpUserDirectory::with_ttl(api, Duration::from_millis(300));
+    let ids = [
+        Snowflake::new(10),
+        Snowflake::new(11),
+        Snowflake::new(10),
+        Snowflake::new(77),
+    ];
+
+    let found = directory.lookup(&ids).await;
+    assert_eq!(found.len(), 2, "unknown ids are left out");
+    assert_eq!(found[&Snowflake::new(10)].username, "user10");
+    assert_eq!(found[&Snowflake::new(10)].avatar.as_deref(), Some("hash"));
+    assert_eq!(calls.users.load(Ordering::SeqCst), 1, "one batch for the page");
+
+    directory.lookup(&[Snowflake::new(10), Snowflake::new(11)]).await;
+    assert_eq!(calls.users.load(Ordering::SeqCst), 1, "known users come from the cache");
+
+    tokio::time::sleep(Duration::from_millis(450)).await;
+    directory.lookup(&[Snowflake::new(10)]).await;
+    assert_eq!(calls.users.load(Ordering::SeqCst), 2, "entries expire");
+}
+
+#[tokio::test]
+async fn failed_lookups_resolve_nothing_and_are_not_cached() {
+    let (api, calls) = start_stub().await;
+    let directory = HttpUserDirectory::new(api);
+    for _ in 0..2 {
+        assert!(directory.lookup(&[Snowflake::new(666)]).await.is_empty());
+    }
+    assert_eq!(calls.users.load(Ordering::SeqCst), 2);
+
+    let unreachable = InternalApi::new(reqwest::Client::new(), "http://127.0.0.1:1", TOKEN.into());
+    assert!(
+        HttpUserDirectory::new(unreachable)
+            .lookup(&[Snowflake::new(10)])
+            .await
+            .is_empty()
     );
 }

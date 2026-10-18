@@ -8,7 +8,7 @@ use contracts::{
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
 use discordy_messages_domain::{InteractionLink, WebhookAuthor};
 
-use crate::dto::{read_state_dto, view_dto};
+use crate::dto::{read_state_dto, single};
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, Id, InternalCaller, parse_id};
 use crate::routes::messages::json_texts;
@@ -22,7 +22,7 @@ pub async fn create_message(
 ) -> Result<Json<MessageDto>, ApiError> {
     let command = internal_command(channel_id, body)?;
     let view = state.use_cases.create_message.execute_internal(command).await?;
-    Ok(Json(view_dto(&view, &state.urls)))
+    Ok(Json(single(&state, &view).await))
 }
 
 fn internal_command(

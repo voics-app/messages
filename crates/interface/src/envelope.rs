@@ -8,32 +8,46 @@ use contracts::{
     MessageDeleteData, MessageReactionData, MessageReactionRemoveAllData, event_type,
 };
 use discordy_messages_application::PortError;
-use discordy_messages_application::ports::{Clock, EventPublisher, EventSink, MessageEvent, MessageEventKind};
+use discordy_messages_application::ports::{
+    Clock, EventPublisher, EventSink, MessageEvent, MessageEventKind, UserDirectory,
+};
 use discordy_messages_domain::Audience;
 use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::attachment_urls::AttachmentUrls;
+use crate::authors::{Authors, resolve};
 use crate::dto::{emoji_dto, message_dto, rfc3339};
 
 pub struct EnvelopePublisher {
     sink: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     urls: AttachmentUrls,
+    users: Arc<dyn UserDirectory>,
 }
 
 impl EnvelopePublisher {
-    pub fn new(sink: Arc<dyn EventSink>, clock: Arc<dyn Clock>, urls: AttachmentUrls) -> Self {
-        Self { sink, clock, urls }
+    pub fn new(
+        sink: Arc<dyn EventSink>,
+        clock: Arc<dyn Clock>,
+        urls: AttachmentUrls,
+        users: Arc<dyn UserDirectory>,
+    ) -> Self {
+        Self {
+            sink,
+            clock,
+            urls,
+            users,
+        }
     }
 
     /// Builds the envelope for `event`. Guild audiences are routed by
     /// `guild_id`; everything else names its recipients explicitly.
-    pub fn envelope(&self, event: &MessageEvent) -> Result<Envelope, PortError> {
+    pub fn envelope(&self, event: &MessageEvent, authors: &Authors) -> Result<Envelope, PortError> {
         let channel = event.channel_id.to_string();
         let guild = event.guild_id.map(|id| id.to_string());
-        let (kind, data) = self.payload(event, &channel, guild.clone())?;
+        let (kind, data) = self.payload(event, &channel, guild.clone(), authors)?;
         let (guild_id, target_user_ids) = match &event.audience {
             Audience::Guild(id) => (Some(id.to_string()), None),
             Audience::Users(users) => (guild, Some(users.iter().map(ToString::to_string).collect())),
@@ -55,6 +69,7 @@ impl EnvelopePublisher {
         event: &MessageEvent,
         channel: &str,
         guild: Option<String>,
+        authors: &Authors,
     ) -> Result<(&'static str, Value), PortError> {
         let channel_id = channel.to_owned();
         let reaction = |message_id: &discordy_messages_domain::MessageId,
@@ -69,11 +84,18 @@ impl EnvelopePublisher {
         let (kind, data) = match &event.kind {
             MessageEventKind::Created { message, nonce } => (
                 event_type::MESSAGE_CREATE,
-                encode(&message_dto(message, &[], event.guild_id, nonce.clone(), &self.urls))?,
+                encode(&message_dto(
+                    message,
+                    &[],
+                    event.guild_id,
+                    nonce.clone(),
+                    &self.urls,
+                    authors,
+                ))?,
             ),
             MessageEventKind::Updated { message } => (
                 event_type::MESSAGE_UPDATE,
-                encode(&message_dto(message, &[], event.guild_id, None, &self.urls))?,
+                encode(&message_dto(message, &[], event.guild_id, None, &self.urls, authors))?,
             ),
             MessageEventKind::Deleted { message_id } => (
                 event_type::MESSAGE_DELETE,
@@ -142,7 +164,13 @@ fn encode(value: &impl Serialize) -> Result<Value, PortError> {
 #[async_trait]
 impl EventPublisher for EnvelopePublisher {
     async fn publish(&self, event: MessageEvent) -> Result<(), PortError> {
-        let envelope = self.envelope(&event)?;
+        let authors = match &event.kind {
+            MessageEventKind::Created { message, .. } | MessageEventKind::Updated { message } => {
+                resolve(self.users.as_ref(), [message]).await
+            }
+            _ => Authors::new(),
+        };
+        let envelope = self.envelope(&event, &authors)?;
         let payload = serde_json::to_vec(&envelope).map_err(PortError::new)?;
         self.sink
             .send(MESSAGE_TOPIC, &event.channel_id.to_string(), payload)
@@ -155,7 +183,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::AtomicU64;
 
-    use discordy_messages_application::fakes::{ALICE, BOB, CHANNEL, FakeClock, GUILD, START_MS};
+    use discordy_messages_application::fakes::{ALICE, BOB, CHANNEL, FakeClock, FakeUsers, GUILD, START_MS};
     use discordy_messages_domain::{Emoji, Snowflake};
 
     use super::*;
@@ -176,7 +204,9 @@ mod tests {
     fn publisher() -> (EnvelopePublisher, Arc<Sink>) {
         let sink = Arc::new(Sink::default());
         let clock = Arc::new(FakeClock(AtomicU64::new(START_MS)));
-        let publisher = EnvelopePublisher::new(sink.clone(), clock, AttachmentUrls::new("http://cdn", "b"));
+        let users = Arc::new(FakeUsers::default());
+        users.add(ALICE, "alice");
+        let publisher = EnvelopePublisher::new(sink.clone(), clock, AttachmentUrls::new("http://cdn", "b"), users);
         (publisher, sink)
     }
 
@@ -222,13 +252,42 @@ mod tests {
             emoji: Emoji::Unicode("👍".into()),
         };
         let envelope = publisher
-            .envelope(&event(Audience::Users(vec![ALICE, BOB]), None, kind))
+            .envelope(&event(Audience::Users(vec![ALICE, BOB]), None, kind), &Authors::new())
             .unwrap();
         assert_eq!(envelope.kind, "MESSAGE_REACTION_ADD");
         assert_eq!(envelope.guild_id, None);
         assert_eq!(envelope.target_user_ids, Some(vec![ALICE.to_string(), BOB.to_string()]));
         assert_eq!(envelope.data["emoji"]["name"], "👍");
         assert_eq!(envelope.data["user_id"], ALICE.to_string());
+    }
+
+    #[tokio::test]
+    async fn message_events_carry_the_full_author() {
+        let (publisher, sink) = publisher();
+        let draft = discordy_messages_domain::MessageDraft {
+            content: "hi".into(),
+            ..Default::default()
+        };
+        let message =
+            discordy_messages_domain::Message::compose(Snowflake::new(1 << 22), CHANNEL, ALICE, draft, false).unwrap();
+        let kind = MessageEventKind::Created {
+            message: message.clone(),
+            nonce: None,
+        };
+        publisher
+            .publish(event(Audience::Guild(GUILD), Some(GUILD), kind))
+            .await
+            .unwrap();
+        let updated = MessageEventKind::Updated { message };
+        publisher
+            .publish(event(Audience::Guild(GUILD), Some(GUILD), updated))
+            .await
+            .unwrap();
+        for (_, _, payload) in sink.0.lock().unwrap().iter() {
+            let envelope: Envelope = serde_json::from_slice(payload).unwrap();
+            assert_eq!(envelope.data["author"]["id"], ALICE.to_string());
+            assert_eq!(envelope.data["author"]["username"], "alice");
+        }
     }
 
     #[test]
@@ -238,7 +297,7 @@ mod tests {
             last_pin_timestamp_ms: Some(1_767_225_600_000),
         };
         let envelope = publisher
-            .envelope(&event(Audience::Guild(GUILD), Some(GUILD), kind))
+            .envelope(&event(Audience::Guild(GUILD), Some(GUILD), kind), &Authors::new())
             .unwrap();
         assert_eq!(envelope.data["last_pin_timestamp"], "2026-01-01T00:00:00Z");
     }

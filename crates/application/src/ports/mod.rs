@@ -12,6 +12,7 @@ mod messages;
 mod pins;
 mod reactions;
 mod read_states;
+mod users;
 
 pub use activity::ActivityRepository;
 pub use attachments::{AttachmentStorage, StoredObject};
@@ -24,3 +25,4 @@ pub use messages::{BucketQuery, MessageRepository};
 pub use pins::{Pin, PinRepository};
 pub use reactions::ReactionRepository;
 pub use read_states::ReadStateRepository;
+pub use users::{UserDirectory, UserProfile};

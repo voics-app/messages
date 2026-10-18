@@ -9,7 +9,7 @@ use discordy_messages_domain::{HistoryCursor, MessageEdit, PageLimit};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::dto::view_dto;
+use crate::dto::{dtos, single};
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, ApiQuery, Caller, Id, parse_id};
 use crate::state::AppState;
@@ -56,7 +56,7 @@ pub async fn history(
         .history
         .execute(channel_id, caller.user_id, query.cursor()?, limit)
         .await?;
-    Ok(Json(views.iter().map(|view| view_dto(view, &state.urls)).collect()))
+    Ok(Json(dtos(&state, &views).await))
 }
 
 /// Nonces are echoed back in the gateway event; clients send strings or integers.
@@ -105,7 +105,7 @@ pub async fn create(
         target_user_ids: Vec::new(),
     };
     let view = state.use_cases.create_message.execute(command).await?;
-    Ok(Json(view_dto(&view, &state.urls)))
+    Ok(Json(single(&state, &view).await))
 }
 
 pub async fn edit(
@@ -123,7 +123,7 @@ pub async fn edit(
         .edit_message
         .execute(channel_id, message_id, caller.user_id, edit)
         .await?;
-    Ok(Json(view_dto(&view, &state.urls)))
+    Ok(Json(single(&state, &view).await))
 }
 
 pub async fn delete(

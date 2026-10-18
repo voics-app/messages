@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::history_reader::HistoryReader;
 use crate::ports::{
     ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator,
-    MessageRepository, PinRepository, ReactionRepository, ReadStateRepository,
+    MessageRepository, PinRepository, ReactionRepository, ReadStateRepository, UserDirectory,
 };
 
 mod acknowledge_message;
@@ -58,4 +58,5 @@ pub struct MessagingPorts {
     pub ids: Arc<dyn IdGenerator>,
     pub clock: Arc<dyn Clock>,
     pub history: Arc<HistoryReader>,
+    pub users: Arc<dyn UserDirectory>,
 }

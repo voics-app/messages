@@ -2,9 +2,11 @@
 
 mod authenticator;
 mod channel_access;
+mod users;
 
 pub use authenticator::TokenAuthenticator;
 pub use channel_access::HttpChannelAccess;
+pub use users::HttpUserDirectory;
 
 use discordy_messages_application::PortError;
 
