@@ -76,7 +76,22 @@ async fn call(app: &Router, method: Method, uri: &str, auth: Option<&str>, body:
         }
         None => Body::empty(),
     };
-    let response = app.clone().oneshot(request.body(body).unwrap()).await.unwrap();
+    send(app, request.body(body).unwrap()).await
+}
+
+async fn post_internal(app: &Router, uri: &str, token: Option<&str>, body: Value) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = token {
+        request = request.header("x-internal-token", token);
+    }
+    send(app, request.body(Body::from(body.to_string())).unwrap()).await
+}
+
+async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
+    let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let value = if bytes.is_empty() {
@@ -270,6 +285,49 @@ async fn upload_slots_point_at_the_attachment_store() {
     assert_eq!(slot["id"], "3");
     assert!(slot["upload_filename"].as_str().unwrap().ends_with("/cat.png"));
     assert!(slot["upload_url"].is_string());
+}
+
+#[tokio::test]
+async fn internal_create_posts_as_the_author_override_without_a_user_check() {
+    let harness = Harness::new();
+    harness.access.set_permissions(Permissions::VIEW_CHANNEL);
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, _) = post_internal(&app, &uri, None, json!({"author_id": BOB.to_string(), "content": "x"})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, created) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "from a bot", "embeds": [{"title": "t"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["author"]["id"], BOB.to_string());
+    assert_eq!(created["content"], "from a bot");
+    assert_eq!(created["embeds"][0]["title"], "t");
+}
+
+#[tokio::test]
+async fn internal_create_refuses_non_standard_delivery_and_bad_bodies() {
+    let harness = Harness::new();
+    harness.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, body) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "secret"}),
+    )
+    .await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::CONFLICT, Some(50160)));
+
+    let (status, body) = post_internal(&app, &uri, Some(INTERNAL), json!({"content": "no author"})).await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::BAD_REQUEST, Some(50035)));
 }
 
 #[tokio::test]

@@ -16,7 +16,9 @@ Public, under `/api/v1` (Bearer JWT or Bot token):
 `POST /channels/{id}/attachments`.
 
 Internal, under `/internal/v1` (header `X-Internal-Token`):
-`GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
+`POST /channels/{id}/messages` (bot, webhook and interaction messages; body `author_id`, `content`,
+`embeds`, `components`; skips the user permission check, still refuses non-standard channels with 409
+code 50160), `GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
 
 Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`.
 

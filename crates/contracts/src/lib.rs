@@ -222,6 +222,21 @@ pub struct ChannelAccessResponse {
     pub recipient_ids: Vec<String>,
 }
 
+/// api: `POST /internal/v1/channels/{channel_id}/messages`. Bot, webhook and
+/// interaction messages. `author_id` is the bot user the message is posted as.
+/// Other fields api sends (username, webhook_id, interaction_id, ...) are not
+/// stored: the message model has no place for them.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+pub struct InternalCreateMessageRequest {
+    pub author_id: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub embeds: Option<Vec<Value>>,
+    #[serde(default)]
+    pub components: Option<Vec<Value>>,
+}
+
 /// api: `POST /internal/v1/auth/introspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntrospectRequest {

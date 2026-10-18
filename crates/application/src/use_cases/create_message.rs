@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::{
-    Attachment, ChannelId, DomainError, Message, MessageDraft, MessageId, ReadState, UploadKey, UserId,
+    Attachment, ChannelAccess, ChannelId, DomainError, Message, MessageDraft, MessageId, ReadState, UploadKey, UserId,
 };
 
 use super::MessagingPorts;
@@ -57,9 +57,22 @@ impl CreateMessage {
     }
 
     pub async fn execute(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
-        let channel_id = command.channel_id;
-        let access = self.access.access(channel_id, command.author_id).await?;
+        let access = self.access.access(command.channel_id, command.author_id).await?;
         access.ensure_can_send(!command.attachments.is_empty())?;
+        self.store(access, command).await
+    }
+
+    /// Posts on behalf of a bot, webhook or interaction. api has already
+    /// authorised the call, so the user permission check is skipped; the
+    /// delivery mode is still enforced.
+    pub async fn execute_internal(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
+        let access = self.access.access(command.channel_id, command.author_id).await?;
+        access.ensure_standard_delivery()?;
+        self.store(access, command).await
+    }
+
+    async fn store(&self, access: ChannelAccess, command: CreateMessageCommand) -> AppResult<MessageView> {
+        let channel_id = command.channel_id;
         if let Some(reply_to) = command.reply_to {
             self.ensure_reply_target_exists(channel_id, reply_to).await?;
         }
@@ -210,6 +223,32 @@ mod tests {
             Err(AppError::Domain(DomainError::DeliveryModeConflict(
                 DeliveryMode::Ephemeral
             )))
+        );
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+        assert!(h.events.kinds().is_empty());
+    }
+
+    #[tokio::test]
+    async fn internal_posts_skip_the_user_permission_check() {
+        let h = Harness::new();
+        h.access.set_permissions(Permissions::VIEW_CHANNEL);
+        let view = CreateMessage::new(&h.ports)
+            .execute_internal(command("from a bot"))
+            .await
+            .unwrap();
+        assert_eq!(view.message.author_id, ALICE);
+        assert!(h.messages.find(CHANNEL, view.message.id).await.unwrap().is_some());
+        assert_eq!(h.events.kinds().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn internal_posts_still_refuse_non_standard_delivery() {
+        let h = Harness::new();
+        h.access.set(Ok(dm_access(DeliveryMode::P2p)));
+        let result = CreateMessage::new(&h.ports).execute_internal(command("hi")).await;
+        assert_eq!(
+            result,
+            Err(AppError::Domain(DomainError::DeliveryModeConflict(DeliveryMode::P2p)))
         );
         assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
         assert!(h.events.kinds().is_empty());

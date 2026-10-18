@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/channels/{channel_id}/attachments", post(attachments::create_slots));
 
     let internal = Router::new()
+        .route("/channels/{channel_id}/messages", post(internal::create_message))
         .route("/channels/{channel_id}/last-message-id", get(internal::last_message_id))
         .route("/users/{user_id}/read-states", get(internal::read_states))
         .route("/admin/stats", get(internal::admin_stats));

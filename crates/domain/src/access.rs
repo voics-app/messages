@@ -80,6 +80,11 @@ impl ChannelAccess {
         if with_attachments && !self.permissions.has(Permissions::ATTACH_FILES) {
             return Err(DomainError::MissingPermissions);
         }
+        self.ensure_standard_delivery()
+    }
+
+    /// Only Standard channels are stored by this service.
+    pub fn ensure_standard_delivery(&self) -> Result<(), DomainError> {
         match self.delivery_mode {
             DeliveryMode::Standard => Ok(()),
             other => Err(DomainError::DeliveryModeConflict(other)),
@@ -205,6 +210,15 @@ mod tests {
             );
         }
         assert!(dm(VIEW | SEND, DeliveryMode::Standard).ensure_can_send(false).is_ok());
+    }
+
+    #[test]
+    fn internal_posts_need_only_a_standard_channel() {
+        assert!(guild(0).ensure_standard_delivery().is_ok());
+        assert_eq!(
+            dm(0, DeliveryMode::Ephemeral).ensure_standard_delivery(),
+            Err(DomainError::DeliveryModeConflict(DeliveryMode::Ephemeral))
+        );
     }
 
     #[test]

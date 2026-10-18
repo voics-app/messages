@@ -69,7 +69,7 @@ fn nonce_text(nonce: Option<Value>) -> Result<Option<String>, ApiError> {
     }
 }
 
-fn json_texts(values: Option<Vec<Value>>) -> Vec<String> {
+pub(crate) fn json_texts(values: Option<Vec<Value>>) -> Vec<String> {
     values.unwrap_or_default().iter().map(Value::to_string).collect()
 }
 

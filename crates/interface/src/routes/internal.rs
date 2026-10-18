@@ -2,12 +2,34 @@
 
 use axum::Json;
 use axum::extract::State;
-use contracts::{AdminStatsResponse, LastMessageIdResponse, MessagesByMode, ReadStateDto};
+use contracts::{
+    AdminStatsResponse, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto,
+};
+use discordy_messages_application::use_cases::CreateMessageCommand;
 
-use crate::dto::read_state_dto;
+use crate::dto::{read_state_dto, view_dto};
 use crate::error::ApiError;
-use crate::extract::{ApiPath, Id, InternalCaller};
+use crate::extract::{ApiJson, ApiPath, Id, InternalCaller, parse_id};
+use crate::routes::messages::json_texts;
 use crate::state::AppState;
+
+pub async fn create_message(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath(Id(channel_id)): ApiPath<Id>,
+    ApiJson(body): ApiJson<InternalCreateMessageRequest>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let command = CreateMessageCommand {
+        channel_id,
+        author_id: parse_id("author_id", &body.author_id)?,
+        content: body.content.unwrap_or_default(),
+        embeds: json_texts(body.embeds),
+        components: json_texts(body.components),
+        ..CreateMessageCommand::default()
+    };
+    let view = state.use_cases.create_message.execute_internal(command).await?;
+    Ok(Json(view_dto(&view, &state.urls)))
+}
 
 pub async fn last_message_id(
     State(state): State<AppState>,
