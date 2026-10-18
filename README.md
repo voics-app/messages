@@ -63,6 +63,7 @@ is reported at once.
 | `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | yes | | MinIO credentials |
 | `MINIO_BUCKET_ATTACHMENTS` | no | `discordy-attachments` | attachments bucket |
 | `CDN_PUBLIC_URL` | yes | | public CDN base URL; presigned upload and attachment URLs use it |
+| `CORS_ALLOWED_ORIGINS` | no | `null,http://localhost:5173` | comma-separated origins allowed by CORS (`null` is the packaged `file://` client) |
 
 ## Pending owner actions
 
