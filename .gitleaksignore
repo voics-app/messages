@@ -1,0 +1,3 @@
+# Reviewed gitleaks findings (2026-10-18). Each entry is a fingerprint, not a blanket rule.
+# false positive (crate name in Cargo.lock)
+3fa5bc7a578f5bc3983876084fbb876bfa9b57ab:Cargo.lock:discord-client-secret:643
