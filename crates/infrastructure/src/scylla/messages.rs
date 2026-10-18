@@ -8,7 +8,7 @@ use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::value::CqlTimestamp;
 
-use super::rows::{MESSAGE_COLUMNS, MessageRow, id, snowflake};
+use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, id, snowflake};
 use super::{execute, fetch_all, prepare};
 
 pub struct ScyllaMessageRepository {
@@ -33,7 +33,8 @@ impl ScyllaMessageRepository {
             insert: prepare(
                 s,
                 &format!(
-                    "INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    "INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES ({})",
+                    vec!["?"; MESSAGE_COLUMN_COUNT].join(", ")
                 ),
             )
             .await?,

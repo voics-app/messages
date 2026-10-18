@@ -63,6 +63,36 @@ async fn access(
     }
 }
 
+async fn delivery(State(calls): State<Stub>, headers: HeaderMap, Path(channel): Path<String>) -> impl IntoResponse {
+    calls.access.fetch_add(1, Ordering::SeqCst);
+    if !authorised(&headers) {
+        return (StatusCode::UNAUTHORIZED, Json(Value::Null));
+    }
+    match channel.as_str() {
+        "1" => (
+            StatusCode::OK,
+            Json(json!({"guild_id": "500", "channel_type": 0,
+                        "delivery_mode": "ephemeral", "recipient_ids": []})),
+        ),
+        _ => (StatusCode::NOT_FOUND, Json(Value::Null)),
+    }
+}
+
+#[tokio::test]
+async fn channel_lookups_need_no_user() {
+    let (api, _) = start_stub().await;
+    let provider = HttpChannelAccess::new(api);
+
+    let channel = provider.channel(Snowflake::new(1)).await.unwrap();
+    assert_eq!(channel.guild_id, Some(Snowflake::new(500)));
+    assert_eq!(channel.delivery_mode, DeliveryMode::Ephemeral);
+    assert_eq!(channel.permissions, Permissions::new(0));
+    assert_eq!(
+        provider.channel(Snowflake::new(9)).await.unwrap_err(),
+        AccessError::UnknownChannel
+    );
+}
+
 async fn introspect(State(calls): State<Stub>, headers: HeaderMap, Json(body): Json<Value>) -> impl IntoResponse {
     calls.introspect.fetch_add(1, Ordering::SeqCst);
     if !authorised(&headers) {
@@ -82,6 +112,7 @@ async fn start_stub() -> (InternalApi, Stub) {
     let calls = Stub::default();
     let app = Router::new()
         .route("/internal/v1/channels/{channel}/access/{user}", get(access))
+        .route("/internal/v1/channels/{channel}/delivery", get(delivery))
         .route("/internal/v1/auth/introspect", post(introspect))
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

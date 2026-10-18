@@ -8,7 +8,13 @@ use super::port_error;
 use discordy_messages_application::PortError;
 
 /// Embedded migrations, ordered by version.
-const MIGRATIONS: &[(&str, &str)] = &[("0001_initial", include_str!("../../../../migrations/0001_initial.cql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_initial", include_str!("../../../../migrations/0001_initial.cql")),
+    (
+        "0002_message_origin",
+        include_str!("../../../../migrations/0002_message_origin.cql"),
+    ),
+];
 
 /// Creates the keyspace when missing (replication factor 1: the platform
 /// runs a single ScyllaDB node), switches to it and applies pending

@@ -6,7 +6,8 @@
 use std::collections::BTreeSet;
 
 use discordy_messages_domain::{
-    Attachment, AttachmentFilename, Bucket, Mentions, Message, MessageKind, ReadState, Snowflake,
+    Attachment, AttachmentFilename, Bucket, InteractionLink, Mentions, Message, MessageKind, ReadState, Snowflake,
+    WebhookAuthor,
 };
 use scylla::value::CqlTimestamp;
 use scylla::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
@@ -48,11 +49,20 @@ pub(crate) struct MessageRow {
     flags: Option<i32>,
     edited_at: Option<CqlTimestamp>,
     pinned: Option<bool>,
+    webhook_id: Option<i64>,
+    webhook_username: Option<String>,
+    webhook_avatar_url: Option<String>,
+    interaction_id: Option<i64>,
+    application_id: Option<i64>,
 }
 
 /// The column list matching [`MessageRow`], for SELECT and INSERT.
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
-     embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned";
+     embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
+     webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id";
+
+/// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 21;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -73,6 +83,11 @@ impl MessageRow {
             flags: Some(message.flags as i32),
             edited_at: message.edited_at_ms.map(|ms| CqlTimestamp(ms as i64)),
             pinned: Some(message.pinned),
+            webhook_id: message.webhook.as_ref().map(|w| id(w.webhook_id)),
+            webhook_username: message.webhook.as_ref().and_then(|w| w.username.clone()),
+            webhook_avatar_url: message.webhook.as_ref().and_then(|w| w.avatar_url.clone()),
+            interaction_id: message.interaction.map(|i| id(i.interaction_id)),
+            application_id: message.interaction.map(|i| id(i.application_id)),
         }
     }
 
@@ -103,6 +118,18 @@ impl MessageRow {
             flags: self.flags.unwrap_or(0) as u32,
             edited_at_ms: self.edited_at.map(|t| t.0 as u64),
             pinned: self.pinned.unwrap_or(false),
+            webhook: self.webhook_id.map(|raw| WebhookAuthor {
+                webhook_id: snowflake(raw),
+                username: self.webhook_username,
+                avatar_url: self.webhook_avatar_url,
+            }),
+            interaction: match (self.interaction_id, self.application_id) {
+                (Some(interaction), Some(application)) => Some(InteractionLink {
+                    interaction_id: snowflake(interaction),
+                    application_id: snowflake(application),
+                }),
+                _ => None,
+            },
         })
     }
 }
@@ -185,6 +212,9 @@ mod tests {
             embeds: vec![r#"{"title":"t"}"#.into()],
             components: vec![],
             reply_to: Some(Snowflake::new(99)),
+            flags: 0,
+            webhook: None,
+            interaction: None,
         };
         let mut message = Message::compose(
             Snowflake::new(1 << 40),
@@ -198,6 +228,38 @@ mod tests {
         let row = MessageRow::from_message(&message);
         assert_eq!(row.bucket, Bucket::of(message.id).value());
         assert_eq!(row.into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn webhook_and_interaction_origins_round_trip() {
+        let draft = MessageDraft {
+            content: "relayed".into(),
+            webhook: Some(WebhookAuthor {
+                webhook_id: Snowflake::new(40),
+                username: Some("Relay".into()),
+                avatar_url: Some("https://cdn.test/a.png".into()),
+            }),
+            interaction: Some(InteractionLink {
+                interaction_id: Snowflake::new(41),
+                application_id: Snowflake::new(42),
+            }),
+            flags: 4,
+            ..MessageDraft::default()
+        };
+        let message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(40),
+            draft,
+            false,
+        )
+        .unwrap();
+        assert_eq!(MessageRow::from_message(&message).into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn the_column_list_matches_the_placeholder_count() {
+        assert_eq!(MESSAGE_COLUMNS.split(',').count(), MESSAGE_COLUMN_COUNT);
     }
 
     #[test]

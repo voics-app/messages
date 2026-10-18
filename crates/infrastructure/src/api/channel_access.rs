@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use contracts::ChannelAccessResponse;
+use contracts::{ChannelAccessResponse, ChannelRoutingResponse};
 use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{AccessError, ChannelAccessProvider};
 use discordy_messages_domain::{ChannelAccess, ChannelId, DeliveryMode, Permissions, Snowflake, UserId};
@@ -84,4 +84,38 @@ impl ChannelAccessProvider for HttpChannelAccess {
             .await
             .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?
     }
+
+    async fn channel(&self, channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {
+        let response = self
+            .api
+            .get(&format!("/internal/v1/channels/{channel_id}/delivery"))
+            .send()
+            .await
+            .map_err(port_error)?;
+        match response.status() {
+            StatusCode::NOT_FOUND => Err(AccessError::UnknownChannel),
+            status if status.is_success() => {
+                let body: ChannelRoutingResponse = response.json().await.map_err(port_error)?;
+                Ok(routing_to_domain(body)?)
+            }
+            status => Err(AccessError::from(port_error(format!(
+                "delivery endpoint returned {status}"
+            )))),
+        }
+    }
+}
+
+fn routing_to_domain(body: ChannelRoutingResponse) -> Result<ChannelAccess, PortError> {
+    let parse_id = |raw: &str| raw.parse::<Snowflake>().map_err(port_error);
+    Ok(ChannelAccess {
+        permissions: Permissions::new(0),
+        guild_id: body.guild_id.as_deref().map(parse_id).transpose()?,
+        channel_type: body.channel_type,
+        delivery_mode: body.delivery_mode.parse::<DeliveryMode>().map_err(port_error)?,
+        recipient_ids: body
+            .recipient_ids
+            .iter()
+            .map(|raw| parse_id(raw))
+            .collect::<Result<_, _>>()?,
+    })
 }
