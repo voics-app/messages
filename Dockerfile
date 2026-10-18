@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked --bin messages \
  && cp target/release/messages /messages
 
-FROM debian:bookworm-slim
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 ARG VERSION=0.1.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="messages" \
@@ -19,8 +19,7 @@ LABEL org.opencontainers.image.title="messages" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.licenses="UNLICENSED"
-RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin messages
 COPY --from=build /messages /usr/local/bin/messages
-USER 10001:10001
+USER nonroot:nonroot
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/messages"]
