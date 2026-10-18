@@ -1,0 +1,21 @@
+name: release
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    permissions: {contents: write, pull-requests: write, issues: write}
+    uses: discordy-voics/.github/.github/workflows/release-please.yml@main
+  docker:
+    needs: release-please
+    if: needs.release-please.outputs.release-created == 'true'
+    permissions: {contents: read, packages: write, id-token: write}
+    uses: discordy-voics/.github/.github/workflows/docker.yml@main
+    with:
+      image-name: messages
+      description: Discordy messages service
+      version: ${{ needs.release-please.outputs.version }}

@@ -1,0 +1,18 @@
+[package]
+name = "discordy-messages-contracts"
+description = "Wire DTOs of the Discordy messages service, mirroring the pinned contracts until the generated crate is published"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "contracts"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
