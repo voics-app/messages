@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use contracts::MessageDto;
 
-use crate::dto::view_dto;
+use crate::dto::dtos;
 use crate::error::ApiError;
 use crate::extract::{ApiPath, Caller, Id};
 use crate::state::AppState;
@@ -16,7 +16,7 @@ pub async fn list(
     ApiPath(Id(channel_id)): ApiPath<Id>,
 ) -> Result<Json<Vec<MessageDto>>, ApiError> {
     let views = state.use_cases.list_pins.execute(channel_id, caller.user_id).await?;
-    Ok(Json(views.iter().map(|view| view_dto(view, &state.urls)).collect()))
+    Ok(Json(dtos(&state, &views).await))
 }
 
 pub async fn pin(

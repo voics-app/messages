@@ -384,6 +384,52 @@ impl IdGenerator for FakeIds {
     }
 }
 
+/// A user directory backed by a map, counting lookups and able to go down.
+#[derive(Default)]
+pub struct FakeUsers {
+    profiles: Mutex<HashMap<UserId, UserProfile>>,
+    calls: AtomicUsize,
+    down: std::sync::atomic::AtomicBool,
+}
+
+impl FakeUsers {
+    pub fn add(&self, id: UserId, username: &str) {
+        let profile = UserProfile {
+            id,
+            username: username.to_owned(),
+            global_name: None,
+            avatar: None,
+            bot: false,
+            system: false,
+            flags: 0,
+        };
+        self.profiles.lock().unwrap().insert(id, profile);
+    }
+
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+
+    /// How many batch lookups were made.
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl UserDirectory for FakeUsers {
+    async fn lookup(&self, ids: &[UserId]) -> HashMap<UserId, UserProfile> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.down.load(Ordering::SeqCst) {
+            return HashMap::new();
+        }
+        let profiles = self.profiles.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| profiles.get(id).map(|profile| (*id, profile.clone())))
+            .collect()
+    }
+}
+
 /// All fakes, wired into a [`MessagingPorts`].
 pub struct Harness {
     pub access: Arc<FakeAccess>,
@@ -394,6 +440,7 @@ pub struct Harness {
     pub storage: Arc<FakeStorage>,
     pub events: Arc<RecordingEvents>,
     pub clock: Arc<FakeClock>,
+    pub users: Arc<FakeUsers>,
     pub ports: MessagingPorts,
 }
 
@@ -434,6 +481,9 @@ impl Harness {
             clock: Arc::clone(&clock),
             generator: Mutex::new(SnowflakeGenerator::new(WorkerId::for_messages(64).unwrap())),
         });
+        let users = Arc::new(FakeUsers::default());
+        users.add(ALICE, "alice");
+        users.add(BOB, "bob");
         let ports = MessagingPorts {
             access: access.clone(),
             messages: messages.clone(),
@@ -446,6 +496,7 @@ impl Harness {
             ids,
             clock: clock.clone(),
             history: Arc::new(HistoryReader::new(messages.clone(), reactions.clone())),
+            users: users.clone(),
         };
         Self {
             access,
@@ -456,6 +507,7 @@ impl Harness {
             storage,
             events,
             clock,
+            users,
             ports,
         }
     }

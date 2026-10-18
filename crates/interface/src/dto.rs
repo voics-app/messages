@@ -11,6 +11,8 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::attachment_urls::AttachmentUrls;
+use crate::authors::{Authors, author_dto, resolve_views};
+use crate::state::AppState;
 
 /// RFC 3339 with millisecond precision, as Discord renders timestamps.
 pub fn rfc3339(unix_ms: u64) -> String {
@@ -67,14 +69,13 @@ pub fn message_dto(
     guild_id: Option<GuildId>,
     nonce: Option<String>,
     urls: &AttachmentUrls,
+    authors: &Authors,
 ) -> MessageDto {
     MessageDto {
         id: message.id.to_string(),
         channel_id: message.channel_id.to_string(),
         guild_id: guild_id.map(|id| id.to_string()),
-        author: UserRef {
-            id: message.author_id.to_string(),
-        },
+        author: author_dto(message, authors),
         content: message.content.clone(),
         timestamp: rfc3339(message.timestamp_ms()),
         edited_timestamp: message.edited_at_ms.map(rfc3339),
@@ -122,8 +123,19 @@ pub fn message_dto(
 
 /// A message as returned by REST: reactions carry the viewer's `me` flag. The
 /// guild id is not stored with the message, so REST responses omit it.
-pub fn view_dto(view: &MessageView, urls: &AttachmentUrls) -> MessageDto {
-    message_dto(&view.message, &view.reactions, None, None, urls)
+pub fn view_dto(view: &MessageView, urls: &AttachmentUrls, authors: &Authors) -> MessageDto {
+    message_dto(&view.message, &view.reactions, None, None, urls, authors)
+}
+
+/// REST body for a list of messages: authors are resolved in one batch.
+pub async fn dtos(state: &AppState, views: &[MessageView]) -> Vec<MessageDto> {
+    let authors = resolve_views(state.users.as_ref(), views).await;
+    views.iter().map(|view| view_dto(view, &state.urls, &authors)).collect()
+}
+
+/// REST body for one message.
+pub async fn single(state: &AppState, view: &MessageView) -> MessageDto {
+    dtos(state, std::slice::from_ref(view)).await.remove(0)
 }
 
 pub fn read_state_dto(state: &ReadState) -> ReadStateDto {
@@ -163,7 +175,14 @@ mod tests {
             false,
         )
         .unwrap();
-        let dto = message_dto(&message, &[], Some(Snowflake::new(8)), Some("n".into()), &urls());
+        let dto = message_dto(
+            &message,
+            &[],
+            Some(Snowflake::new(8)),
+            Some("n".into()),
+            &urls(),
+            &Authors::new(),
+        );
         assert_eq!(dto.kind, 19);
         assert_eq!(dto.message_reference.unwrap().message_id, "3");
         assert_eq!(dto.mentions, vec![UserRef { id: "7".into() }]);

@@ -55,11 +55,55 @@ pub struct ErrorBody {
 // Public REST objects (P9)
 // ---------------------------------------------------------------------------
 
-/// A partial Discord User. The messages service only knows ids; clients
-/// resolve the rest from their user cache.
+/// A partial Discord User, used for mentions: clients resolve the rest from
+/// their user cache.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserRef {
     pub id: String,
+}
+
+/// A message author. `id` is always present; the profile fields are filled
+/// in from the api service and left out when it could not be reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorDto {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub discriminator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub global_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub avatar: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bot: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub system: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub public_flags: Option<u64>,
+}
+
+/// Request of the api service's `POST /internal/v1/users/lookup` (P4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsersLookupRequest {
+    pub ids: Vec<String>,
+}
+
+/// One user in the lookup answer: the public fields only.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LookedUpUser {
+    pub id: String,
+    pub username: String,
+    #[serde(default)]
+    pub global_name: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub bot: bool,
+    #[serde(default)]
+    pub system: bool,
+    #[serde(default)]
+    pub flags: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,7 +112,7 @@ pub struct MessageDto {
     pub channel_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guild_id: Option<String>,
-    pub author: UserRef,
+    pub author: AuthorDto,
     pub content: String,
     pub timestamp: String,
     pub edited_timestamp: Option<String>,

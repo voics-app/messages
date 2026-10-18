@@ -483,3 +483,110 @@ async fn metrics_count_responses_by_status_class() {
     assert!(text.contains("messages_http_requests_total{status=\"2xx\"} 1"));
     assert!(text.contains("messages_http_requests_total{status=\"4xx\"} 1"));
 }
+
+#[tokio::test]
+async fn history_hydrates_authors_with_one_lookup_per_page() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    for (author, text) in [(ALICE, "one"), (BOB, "two"), (ALICE, "three")] {
+        harness.seed(author, text).await;
+    }
+
+    let (status, page) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = page
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["author"]["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["alice", "bob", "alice"].iter().rev().copied().collect::<Vec<_>>()
+    );
+    assert_eq!(page[0]["author"]["discriminator"], "0");
+    assert_eq!(harness.users.calls(), 1, "one batched lookup for the whole page");
+}
+
+#[tokio::test]
+async fn created_edited_and_pinned_messages_carry_the_full_author() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+    let app = app(&harness);
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "hello"})),
+    )
+    .await;
+    assert_eq!(created["author"]["username"], "alice");
+    let id = created["id"].as_str().unwrap().to_owned();
+
+    let (_, edited) = call(
+        &app,
+        Method::PATCH,
+        &format!("{}/{id}", messages_uri()),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "edited"})),
+    )
+    .await;
+    assert_eq!(edited["author"]["username"], "alice");
+
+    let pin_uri = format!("/api/v1/channels/{CHANNEL}/pins");
+    let (status, _) = call(&app, Method::PUT, &format!("{pin_uri}/{id}"), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, pins) = call(&app, Method::GET, &pin_uri, Some(ALICE_TOKEN), None).await;
+    assert_eq!(pins[0]["author"]["username"], "alice");
+}
+
+#[tokio::test]
+async fn an_unavailable_api_degrades_authors_to_ids_without_failing() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    harness.seed(ALICE, "one").await;
+    harness.users.set_down(true);
+
+    let (status, page) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page[0]["author"], json!({"id": ALICE.to_string()}));
+
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "still works"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["author"], json!({"id": ALICE.to_string()}));
+}
+
+#[tokio::test]
+async fn internal_webhook_posts_keep_their_stored_username() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+    let (status, posted) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "deployed", "webhook_id": "900",
+               "username": "Deploy bot"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+    assert_eq!(posted["author"]["username"], "Deploy bot");
+    assert_eq!(posted["author"]["bot"], true);
+
+    let (_, plain) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "content": "from a bot user"}),
+    )
+    .await;
+    assert_eq!(plain["author"]["username"], "bob");
+}

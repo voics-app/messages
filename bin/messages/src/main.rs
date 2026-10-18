@@ -11,7 +11,7 @@ use std::time::Duration;
 use config::{Config, Environment};
 use discordy_messages_application::use_cases::MessagingPorts;
 use discordy_messages_application::{HistoryReader, PortError};
-use discordy_messages_infrastructure::api::{HttpChannelAccess, InternalApi, TokenAuthenticator};
+use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
 use discordy_messages_infrastructure::kafka::KafkaEventSink;
 use discordy_messages_infrastructure::scylla::{
     self, ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
@@ -91,6 +91,7 @@ async fn run(config: Config) -> Result<(), StartupError> {
     let authenticator = Arc::new(TokenAuthenticator::new(&config.jwt_public_key, api.clone())?);
     let clock = Arc::new(SystemClock);
     let urls = AttachmentUrls::new(&config.cdn_public_url, &config.attachments_bucket);
+    let users = Arc::new(HttpUserDirectory::new(api.clone()));
     let ports = MessagingPorts {
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
@@ -99,10 +100,16 @@ async fn run(config: Config) -> Result<(), StartupError> {
         read_states: Arc::new(ScyllaReadStateRepository::new(session.clone()).await?),
         activity: Arc::new(ScyllaActivityRepository::new(session.clone()).await?),
         storage: Arc::new(storage),
-        events: Arc::new(EnvelopePublisher::new(kafka.clone(), clock.clone(), urls.clone())),
+        events: Arc::new(EnvelopePublisher::new(
+            kafka.clone(),
+            clock.clone(),
+            urls.clone(),
+            users.clone(),
+        )),
         ids: Arc::new(SnowflakeIds::new(config.worker)),
         clock,
         history: Arc::new(HistoryReader::new(messages, reactions)),
+        users,
     };
     let probes: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(ScyllaProbe(session)), Arc::new(KafkaProbe(kafka))];
     let state = AppState::new(

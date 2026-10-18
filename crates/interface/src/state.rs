@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use discordy_messages_application::ports::Authenticator;
+use discordy_messages_application::ports::{Authenticator, UserDirectory};
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
     GetLastMessageId, GetMessageHistory, GetMessageStats, ListPins, ListReadStates, MessagingPorts, PinMessage,
@@ -75,6 +75,7 @@ pub struct Shared {
     pub authenticator: Arc<dyn Authenticator>,
     pub internal_token: InternalToken,
     pub urls: AttachmentUrls,
+    pub users: Arc<dyn UserDirectory>,
     pub readiness: Vec<Arc<dyn ReadinessCheck>>,
     pub metrics: Metrics,
 }
@@ -95,6 +96,7 @@ impl AppState {
             authenticator,
             internal_token,
             urls,
+            users: ports.users.clone(),
             readiness,
             metrics: Metrics::default(),
         }))
