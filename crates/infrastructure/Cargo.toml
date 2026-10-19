@@ -1,0 +1,38 @@
+[package]
+name = "discordy-messages-infrastructure"
+description = "Adapters of the Discordy messages service: ScyllaDB, Redpanda, MinIO and the api service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+discordy-messages-domain.workspace = true
+discordy-messages-application.workspace = true
+discordy-messages-contracts.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+scylla = "1"
+rskafka = { version = "0.6", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+rusty-s3 = "0.10"
+url = "2"
+moka = { version = "0.12", features = ["future"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
+subtle = "2"
+
+[dev-dependencies]
+testcontainers = "0.28"
+tokio = { workspace = true, features = ["test-util"] }
+axum = "0.8"
+
+[lints]
+workspace = true

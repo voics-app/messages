@@ -1,0 +1,34 @@
+[package]
+name = "discordy-messages-interface"
+description = "HTTP interface of the Discordy messages service: public REST, internal API and event envelopes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+discordy-messages-domain.workspace = true
+discordy-messages-application.workspace = true
+discordy-messages-contracts.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tower-http.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+subtle = "2"
+
+[dev-dependencies]
+discordy-messages-application = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[lints]
+workspace = true

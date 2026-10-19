@@ -1,0 +1,35 @@
+name: ci
+on:
+  push:
+    branches: [main, develop, "release/**", "hotfix/**", "feature/**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitflow:
+    if: github.event_name == 'pull_request'
+    uses: discordy-voics/.github/.github/workflows/gitflow-guard.yml@main
+
+  rust:
+    uses: discordy-voics/.github/.github/workflows/rust.yml@main
+    with:
+      image-name: messages
+      description: Discordy messages service
+      # RUSTSEC-2023-0071 (rsa Marvin attack) has no fixed release; messages never performs RSA decryption.
+      audit-args: --ignore RUSTSEC-2023-0071
+    secrets:
+      private-deps-token: ${{ secrets.DEPS_TOKEN }}
+
+  docker:
+    needs: rust
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: discordy-voics/.github/.github/workflows/docker.yml@main
+    with:
+      image-name: messages
+      description: Discordy messages service

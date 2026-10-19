@@ -1,0 +1,63 @@
+# Architecture
+
+Clean Architecture in a Cargo workspace. Dependencies point inward only.
+
+| Crate | Layer | Content |
+|---|---|---|
+| `crates/domain` | domain | Snowflakes, buckets, paging planner, access rules, message, reactions, read state. No IO. |
+| `crates/application` | application | One use case per file, ports (traits), `Coalescer`, `HistoryReader`. |
+| `crates/infrastructure` | adapters | ScyllaDB repositories and CQL migrations, Redpanda producer, MinIO storage, api-service clients. |
+| `crates/interface` | interface | axum routes, DTO mapping, error envelope, event envelope encoder. |
+| `crates/contracts` | wire types | DTOs matching the pinned interfaces, swappable for the generated package. |
+| `bin/messages` | composition root | Configuration, wiring, startup and shutdown. |
+
+```mermaid
+C4Component
+    title messages service - components
+    Container_Boundary(svc, "messages") {
+        Component(http, "HTTP interface", "axum", "Public REST, internal API, health, metrics")
+        Component(uc, "Use cases", "Rust", "Create, edit, delete, react, pin, ack, history, uploads, stats")
+        Component(co, "Coalescer", "DashMap + Shared futures", "One ScyllaDB read for identical concurrent history reads")
+        Component(dom, "Domain", "Rust", "Buckets, paging, permissions, delivery mode")
+        Component(scy, "Scylla adapters", "scylla driver", "Prepared statements, migrations")
+        Component(pub, "Event publisher", "rskafka", "P6 envelopes to discordy.message.v1")
+        Component(s3, "Attachment storage", "rusty-s3", "Presigned uploads, stat, delete")
+        Component(apic, "api clients", "reqwest + moka", "JWT and bot auth, channel access (5 s cache)")
+    }
+    System_Ext(scylla, "ScyllaDB")
+    System_Ext(rp, "Redpanda")
+    System_Ext(minio, "MinIO")
+    System_Ext(api, "api service")
+    Rel(http, uc, "calls")
+    Rel(uc, dom, "uses")
+    Rel(uc, co, "history reads")
+    Rel(co, scy, "reads")
+    Rel(uc, scy, "writes")
+    Rel(uc, pub, "announces after commit")
+    Rel(uc, s3, "attachments")
+    Rel(uc, apic, "permissions")
+    Rel(http, apic, "authenticates")
+    Rel(scy, scylla, "CQL")
+    Rel(pub, rp, "Kafka API")
+    Rel(s3, minio, "S3 API")
+    Rel(apic, api, "internal HTTP")
+```
+
+## Decisions
+
+- **Bucketed partitions.** Messages are keyed by `(channel_id, 10-day bucket)`. Paging walks
+  buckets backwards from the channel's last message until the page is full or the creation
+  bucket is reached.
+- **Last message id** is a separate table written with a timestamp derived from the message id,
+  so late writes never move it backwards. Timestamps are unix microseconds, which ScyllaDB
+  requires.
+- **Coalescing.** Every history partition read goes through `Coalescer`, so a burst of identical
+  reads costs one query.
+- **Write then publish.** ScyllaDB is the source of truth. A failed publish is logged, not
+  surfaced, because the write is already durable.
+- **Delivery modes.** The access endpoint of the api service reports the effective mode; only
+  `standard` is accepted (409, code 50160).
+- **Uploads.** Presigned PUT URLs are signed against the CDN origin; the CDN path prefix is
+  added afterwards, because the ingress strips it before MinIO verifies the signature.
+- **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
+  channel holds.

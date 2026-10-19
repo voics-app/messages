@@ -1,0 +1,37 @@
+use async_trait::async_trait;
+use discordy_messages_domain::{Bucket, ChannelId, Message, MessageId, ScanDirection};
+
+use crate::error::PortError;
+
+/// One query against one `(channel_id, bucket)` partition. Hashable so that
+/// identical concurrent queries can be coalesced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BucketQuery {
+    pub channel_id: ChannelId,
+    pub bucket: Bucket,
+    pub direction: ScanDirection,
+    /// Exclusive bound; `None` reads from the top of the partition.
+    pub bound: Option<MessageId>,
+    pub limit: usize,
+}
+
+#[async_trait]
+pub trait MessageRepository: Send + Sync {
+    /// Stores a new message and advances the channel's last message id.
+    async fn insert(&self, message: &Message) -> Result<(), PortError>;
+
+    /// Overwrites the mutable fields of an existing message.
+    async fn update(&self, message: &Message) -> Result<(), PortError>;
+
+    async fn find(&self, channel_id: ChannelId, message_id: MessageId) -> Result<Option<Message>, PortError>;
+
+    async fn delete(&self, channel_id: ChannelId, message_ids: &[MessageId]) -> Result<(), PortError>;
+
+    async fn set_pinned(&self, channel_id: ChannelId, message_id: MessageId, pinned: bool) -> Result<(), PortError>;
+
+    /// Messages of one bucket: newest first for `Older`, oldest first for
+    /// `Newer`.
+    async fn scan_bucket(&self, query: BucketQuery) -> Result<Vec<Message>, PortError>;
+
+    async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError>;
+}
