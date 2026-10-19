@@ -279,6 +279,8 @@ pub struct FakeAccess {
     pub access: Mutex<Result<ChannelAccess, AccessError>>,
     /// The answer for user-less lookups (webhook posts).
     pub channel: Mutex<Result<ChannelAccess, AccessError>>,
+    /// The uncached answer (`refresh`); falls back to `access` when unset.
+    pub fresh: Mutex<Option<Result<ChannelAccess, AccessError>>>,
 }
 
 impl FakeAccess {
@@ -303,6 +305,13 @@ impl ChannelAccessProvider for FakeAccess {
 
     async fn channel(&self, _channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {
         self.channel.lock().unwrap().clone()
+    }
+
+    async fn refresh(&self, _channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
+        match self.fresh.lock().unwrap().clone() {
+            Some(answer) => answer,
+            None => self.access.lock().unwrap().clone(),
+        }
     }
 }
 
@@ -469,6 +478,7 @@ impl Harness {
         let access = Arc::new(FakeAccess {
             access: Mutex::new(Ok(guild_access(MEMBER))),
             channel: Mutex::new(Ok(guild_access(MEMBER))),
+            fresh: Mutex::new(None),
         });
         let messages = Arc::new(InMemoryMessages::default());
         let reactions = Arc::new(InMemoryReactions::default());
