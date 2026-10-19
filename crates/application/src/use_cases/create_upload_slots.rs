@@ -39,7 +39,7 @@ impl CreateUploadSlots {
         user: UserId,
         files: Vec<UploadRequest>,
     ) -> AppResult<Vec<UploadSlot>> {
-        self.access.access(channel_id, user).await?.ensure_can_send(true)?;
+        self.access.access(channel_id, user).await?.ensure_can_upload()?;
         if files.is_empty() || files.len() > MAX_UPLOADS_PER_REQUEST {
             return Err(DomainError::invalid("files", "must contain between 1 and 10 files").into());
         }
@@ -87,7 +87,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requires_attach_files_and_a_standard_channel() {
+    async fn requires_attach_files_and_a_channel_that_uses_the_cdn() {
         let h = Harness::new();
         h.access
             .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES);
@@ -96,6 +96,8 @@ mod tests {
             use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await,
             Err(AppError::Domain(DomainError::MissingPermissions))
         );
+        h.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+        assert!(use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await.is_ok());
         h.access.set(Ok(dm_access(DeliveryMode::P2p)));
         assert_eq!(
             use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await,

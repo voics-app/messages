@@ -83,6 +83,22 @@ impl ChannelAccess {
         self.ensure_standard_delivery()
     }
 
+    /// Upload slots for attachments. Standard channels store the file as is; Ephemeral channels
+    /// store client-side encrypted ciphertext (opaque to this service, referenced only from inside
+    /// the end-to-end encrypted message). P2P channels never touch the server.
+    pub fn ensure_can_upload(&self) -> Result<(), DomainError> {
+        match self.delivery_mode {
+            DeliveryMode::Standard => self.ensure_can_send(true),
+            DeliveryMode::Ephemeral => {
+                // Same permission checks as sending; only the mode gate differs.
+                let mut as_standard = self.clone();
+                as_standard.delivery_mode = DeliveryMode::Standard;
+                as_standard.ensure_can_send(true)
+            }
+            DeliveryMode::P2p => Err(DomainError::DeliveryModeConflict(DeliveryMode::P2p)),
+        }
+    }
+
     /// Only Standard channels are stored by this service.
     pub fn ensure_standard_delivery(&self) -> Result<(), DomainError> {
         match self.delivery_mode {
@@ -210,6 +226,28 @@ mod tests {
             );
         }
         assert!(dm(VIEW | SEND, DeliveryMode::Standard).ensure_can_send(false).is_ok());
+    }
+
+    #[test]
+    fn uploads_are_allowed_for_standard_and_ephemeral_but_not_p2p() {
+        assert!(
+            dm(VIEW | SEND | Permissions::ATTACH_FILES, DeliveryMode::Standard)
+                .ensure_can_upload()
+                .is_ok()
+        );
+        assert!(
+            dm(VIEW | SEND | Permissions::ATTACH_FILES, DeliveryMode::Ephemeral)
+                .ensure_can_upload()
+                .is_ok()
+        );
+        assert_eq!(
+            dm(VIEW | SEND | Permissions::ATTACH_FILES, DeliveryMode::P2p).ensure_can_upload(),
+            Err(DomainError::DeliveryModeConflict(DeliveryMode::P2p))
+        );
+        assert_eq!(
+            dm(VIEW | SEND, DeliveryMode::Ephemeral).ensure_can_upload(),
+            Err(DomainError::MissingPermissions)
+        );
     }
 
     #[test]
