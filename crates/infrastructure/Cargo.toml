@@ -12,6 +12,7 @@ discordy-messages-domain.workspace = true
 discordy-messages-application.workspace = true
 discordy-messages-contracts.workspace = true
 async-trait.workspace = true
+bytes = "1"
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,7 +23,7 @@ tracing.workspace = true
 scylla = "1"
 rskafka = { version = "0.6", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 rusty-s3 = "0.10"
 url = "2"
 moka = { version = "0.12", features = ["future"] }

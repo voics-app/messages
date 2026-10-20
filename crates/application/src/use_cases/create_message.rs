@@ -8,7 +8,7 @@ use discordy_messages_domain::{
 };
 
 use super::MessagingPorts;
-use super::support::{announce, event};
+use super::support::{announce, checked_access, event};
 use crate::error::AppResult;
 use crate::ports::{
     ActivityRepository, AttachmentStorage, ChannelAccessProvider, EventPublisher, IdGenerator, MessageEvent,
@@ -66,8 +66,11 @@ impl CreateMessage {
     }
 
     pub async fn execute(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
-        let access = self.access.access(command.channel_id, command.author_id).await?;
-        access.ensure_can_send(!command.attachments.is_empty())?;
+        let with_attachments = !command.attachments.is_empty();
+        let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
+            a.ensure_can_send(with_attachments)
+        })
+        .await?;
         self.store(&access, command).await
     }
 
@@ -281,6 +284,19 @@ mod tests {
         );
         assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
         assert!(h.events.kinds().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stale_cached_mode_is_rechecked_before_rejecting() {
+        // The user switched the chat back to Standard; the cached access still says Ephemeral.
+        let h = Harness::new();
+        h.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+        *h.access.fresh.lock().unwrap() = Some(Ok(dm_access(DeliveryMode::Standard)));
+        let view = CreateMessage::new(&h.ports)
+            .execute(command("back to standard"))
+            .await
+            .unwrap();
+        assert!(h.messages.find(CHANNEL, view.message.id).await.unwrap().is_some());
     }
 
     #[tokio::test]

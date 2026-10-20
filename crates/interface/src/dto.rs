@@ -148,11 +148,20 @@ pub fn read_state_dto(state: &ReadState) -> ReadStateDto {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
     use super::*;
+    use discordy_messages_application::fakes::FakeClock;
     use discordy_messages_domain::{MessageDraft, Snowflake};
 
     fn urls() -> AttachmentUrls {
-        AttachmentUrls::new("http://cdn", "bucket")
+        AttachmentUrls::new(
+            "http://cdn",
+            "unit-test-signing-key-0123456789abcdef",
+            std::time::Duration::from_secs(60),
+            Arc::new(FakeClock(AtomicU64::new(0))),
+        )
     }
 
     #[test]

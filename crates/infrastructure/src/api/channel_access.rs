@@ -85,6 +85,11 @@ impl ChannelAccessProvider for HttpChannelAccess {
             .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?
     }
 
+    async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
+        self.cache.invalidate(&(channel_id, user_id)).await;
+        self.access(channel_id, user_id).await
+    }
+
     async fn channel(&self, channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {
         let response = self
             .api

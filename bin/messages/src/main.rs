@@ -90,7 +90,12 @@ async fn run(config: Config) -> Result<(), StartupError> {
     let api = InternalApi::new(http, &config.api_internal_url, config.internal_service_token.clone());
     let authenticator = Arc::new(TokenAuthenticator::new(&config.jwt_public_key, api.clone())?);
     let clock = Arc::new(SystemClock);
-    let urls = AttachmentUrls::new(&config.cdn_public_url, &config.attachments_bucket);
+    let urls = AttachmentUrls::new(
+        &config.cdn_public_url,
+        &config.attachment_signing_key,
+        config.attachment_url_ttl,
+        clock.clone(),
+    );
     let users = Arc::new(HttpUserDirectory::new(api.clone()));
     let ports = MessagingPorts {
         access: Arc::new(HttpChannelAccess::new(api)),

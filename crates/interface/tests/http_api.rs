@@ -1,6 +1,7 @@
 //! End-to-end tests of the HTTP surface over in-memory ports.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -17,6 +18,7 @@ use tower::ServiceExt;
 
 const ALICE_TOKEN: &str = "Bearer alice";
 const INTERNAL: &str = "internal-secret";
+const SIGNING_KEY: &str = "integration-signing-key-0123456789abcdef";
 
 struct FakeAuth;
 
@@ -55,7 +57,12 @@ fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
         &harness.ports,
         Arc::new(FakeAuth),
         InternalToken::new(INTERNAL),
-        AttachmentUrls::new("http://cdn/cdn", "attachments"),
+        AttachmentUrls::new(
+            "http://cdn/cdn",
+            SIGNING_KEY,
+            Duration::from_secs(3600),
+            harness.clock.clone(),
+        ),
         probes,
     ))
 }
@@ -589,4 +596,171 @@ async fn internal_webhook_posts_keep_their_stored_username() {
     )
     .await;
     assert_eq!(plain["author"]["username"], "bob");
+}
+
+// ---- signed attachment downloads -------------------------------------------------
+
+const CDN_PREFIX: &str = "http://cdn/cdn";
+
+async fn fetch(app: &Router, uri: &str, range: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::builder().method(Method::GET).uri(uri);
+    if let Some(range) = range {
+        request = request.header("range", range);
+    }
+    let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, headers, bytes)
+}
+
+/// Posts a message with one uploaded `cat.png` and returns its signed URL as a local path.
+async fn post_with_attachment(harness: &Harness, app: &Router) -> String {
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/77/cat.png"), b"meow-meow");
+    let (status, created) = call(
+        app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "look", "attachments": [
+            {"id": 0, "uploaded_filename": format!("attachments/{CHANNEL}/77/cat.png")}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let url = created["attachments"][0]["url"].as_str().unwrap();
+    assert!(
+        url.starts_with(&format!("{CDN_PREFIX}/attachments/{CHANNEL}/77/cat.png?ex=")),
+        "{url}"
+    );
+    assert_eq!(created["attachments"][0]["proxy_url"], created["attachments"][0]["url"]);
+    url.strip_prefix(CDN_PREFIX).unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn a_signed_attachment_url_downloads_the_file_without_credentials() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::ATTACH_FILES);
+    let app = app(&harness);
+    let path = post_with_attachment(&harness, &app).await;
+
+    let (status, headers, body) = fetch(&app, &path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"meow-meow");
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(headers["content-disposition"].to_str().unwrap().starts_with("inline;"));
+    assert_eq!(headers["cache-control"], "private, max-age=3600");
+
+    let (status, headers, body) = fetch(&app, &path, Some("bytes=5-")).await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, b"meow");
+    assert_eq!(headers["content-range"], "bytes 5-8/9");
+}
+
+#[tokio::test]
+async fn unsigned_tampered_and_foreign_urls_are_forbidden() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::ATTACH_FILES);
+    let app = app(&harness);
+    let path = post_with_attachment(&harness, &app).await;
+    let (base, query) = path.split_once('?').unwrap();
+
+    for uri in [
+        base.to_owned(),
+        format!("{base}?ex=ffffffffff&is=0&hm={}", "00".repeat(32)),
+        path.replace("hm=", "hm=0"),
+        path.replace("/cat.png?", "/dog.png?"),
+        path.replacen(&format!("/{CHANNEL}/"), "/1/", 1),
+        format!("{base}?{}", query.replacen("ex=", "ex=1", 1)),
+    ] {
+        let (status, _, _) = fetch(&app, &uri, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn expired_urls_are_gone_and_a_refetched_message_carries_a_fresh_one() {
+    let harness = Harness::new();
+    harness.access.set_permissions(
+        Permissions::VIEW_CHANNEL
+            | Permissions::SEND_MESSAGES
+            | Permissions::ATTACH_FILES
+            | Permissions::READ_MESSAGE_HISTORY,
+    );
+    let app = app(&harness);
+    let old = post_with_attachment(&harness, &app).await;
+
+    harness.clock.advance_ms(3_601_000);
+    let (status, _, _) = fetch(&app, &old, None).await;
+    assert_eq!(status, StatusCode::GONE);
+
+    let (status, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    let fresh = history[0]["attachments"][0]["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix(CDN_PREFIX)
+        .unwrap()
+        .to_owned();
+    assert_ne!(fresh, old);
+    let (status, _, body) = fetch(&app, &fresh, None).await;
+    assert_eq!((status, body), (StatusCode::OK, b"meow-meow".to_vec()));
+}
+
+#[tokio::test]
+async fn a_validly_signed_url_for_a_missing_object_is_not_found() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::ATTACH_FILES);
+    let app = app(&harness);
+    let path = post_with_attachment(&harness, &app).await;
+    harness.storage.bodies.lock().unwrap().clear();
+    let (status, _, _) = fetch(&app, &path, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn refresh_urls_signs_keys_for_members_and_refuses_foreign_channels() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY);
+    let app = app(&harness);
+    let uri = format!("/api/v1/channels/{CHANNEL}/attachments/refresh-urls");
+    let key = format!("attachments/{CHANNEL}/77/blob.bin");
+    harness.storage.put_body(&key, b"ciphertext");
+
+    let (status, _) = call(&app, Method::POST, &uri, None, Some(json!({"attachment_urls": [key]}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachment_urls": [key.clone()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["refreshed_urls"][0]["original"], key);
+    let fresh = body["refreshed_urls"][0]["refreshed"].as_str().unwrap();
+    let path = fresh.strip_prefix(CDN_PREFIX).expect("under the CDN");
+    let (status, _, bytes) = fetch(&app, path, None).await;
+    assert_eq!((status, bytes), (StatusCode::OK, b"ciphertext".to_vec()));
+
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachment_urls": ["attachments/12345/77/blob.bin"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

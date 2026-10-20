@@ -2,7 +2,9 @@
 
 use axum::Json;
 use axum::extract::State;
-use contracts::{UploadRequestBody, UploadSlotDto, UploadSlotsResponse};
+use contracts::{
+    RefreshUrlsRequest, RefreshUrlsResponse, RefreshedUrlDto, UploadRequestBody, UploadSlotDto, UploadSlotsResponse,
+};
 use discordy_messages_application::use_cases::UploadRequest;
 use serde_json::Value;
 
@@ -48,6 +50,32 @@ pub async fn create_slots(
                 id: slot.client_id,
                 upload_url: slot.upload_url,
                 upload_filename: slot.upload_filename,
+            })
+            .collect(),
+    }))
+}
+
+/// `POST /channels/{id}/attachments/refresh-urls`: fresh signed URLs for
+/// attachments of this channel, given their object keys or old URLs. Ephemeral
+/// attachments are not stored with any message, so recipients obtain their
+/// download links here; expired links of stored messages can use it too.
+pub async fn refresh_urls(
+    State(state): State<AppState>,
+    Caller(caller): Caller,
+    ApiPath(Id(channel_id)): ApiPath<Id>,
+    ApiJson(body): ApiJson<RefreshUrlsRequest>,
+) -> Result<Json<RefreshUrlsResponse>, ApiError> {
+    let resolved = state
+        .use_cases
+        .refresh_urls
+        .execute(channel_id, caller.user_id, body.attachment_urls)
+        .await?;
+    Ok(Json(RefreshUrlsResponse {
+        refreshed_urls: resolved
+            .into_iter()
+            .map(|(original, key)| RefreshedUrlDto {
+                refreshed: state.urls.url_for(&key),
+                original,
             })
             .collect(),
     }))
