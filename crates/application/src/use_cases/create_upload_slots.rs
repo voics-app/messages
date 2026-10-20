@@ -4,6 +4,7 @@ use discordy_messages_domain::attachment::{MAX_UPLOADS_PER_REQUEST, validate_upl
 use discordy_messages_domain::{AttachmentFilename, ChannelId, DomainError, UploadKey, UserId};
 
 use super::MessagingPorts;
+use super::support::checked_access;
 use crate::error::AppResult;
 use crate::ports::{AttachmentStorage, ChannelAccessProvider, IdGenerator};
 use crate::views::UploadSlot;
@@ -39,7 +40,7 @@ impl CreateUploadSlots {
         user: UserId,
         files: Vec<UploadRequest>,
     ) -> AppResult<Vec<UploadSlot>> {
-        self.access.access(channel_id, user).await?.ensure_can_send(true)?;
+        checked_access(&*self.access, channel_id, user, |a| a.ensure_can_upload()).await?;
         if files.is_empty() || files.len() > MAX_UPLOADS_PER_REQUEST {
             return Err(DomainError::invalid("files", "must contain between 1 and 10 files").into());
         }
@@ -87,7 +88,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requires_attach_files_and_a_standard_channel() {
+    async fn requires_attach_files_and_a_channel_that_uses_the_cdn() {
         let h = Harness::new();
         h.access
             .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES);
@@ -96,6 +97,8 @@ mod tests {
             use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await,
             Err(AppError::Domain(DomainError::MissingPermissions))
         );
+        h.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+        assert!(use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await.is_ok());
         h.access.set(Ok(dm_access(DeliveryMode::P2p)));
         assert_eq!(
             use_case.execute(CHANNEL, ALICE, vec![request("a", 1)]).await,

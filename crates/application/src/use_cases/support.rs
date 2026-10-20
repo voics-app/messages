@@ -72,3 +72,24 @@ pub(crate) async fn purge_dependents(
     }
     Ok(())
 }
+
+/// Resolves the caller's access and applies `check`. A delivery mode conflict is re-checked once
+/// against fresh data, because the access answer may be cached for a few seconds after the user
+/// switched the chat's delivery mode.
+pub(crate) async fn checked_access(
+    provider: &dyn crate::ports::ChannelAccessProvider,
+    channel_id: ChannelId,
+    user: UserId,
+    check: impl Fn(&ChannelAccess) -> Result<(), DomainError>,
+) -> AppResult<ChannelAccess> {
+    let access = provider.access(channel_id, user).await?;
+    match check(&access) {
+        Ok(()) => Ok(access),
+        Err(DomainError::DeliveryModeConflict(_)) => {
+            let fresh = provider.refresh(channel_id, user).await?;
+            check(&fresh)?;
+            Ok(fresh)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
