@@ -215,6 +215,7 @@ mod tests {
             flags: 0,
             webhook: None,
             interaction: None,
+            ..MessageDraft::default()
         };
         let mut message = Message::compose(
             Snowflake::new(1 << 40),
