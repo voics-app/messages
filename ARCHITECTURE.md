@@ -59,5 +59,10 @@ C4Component
   `standard` is accepted (409, code 50160).
 - **Uploads.** Presigned PUT URLs are signed against the CDN origin; the CDN path prefix is
   added afterwards, because the ingress strips it before MinIO verifies the signature.
+- **Downloads.** The bucket is private. Message attachments carry Discord-style signed URLs
+  `{CDN}/attachments/{channel}/{id}/{file}?ex&is&hm` (HMAC-SHA256, 24 h, re-signed on every
+  serialization). `GET /attachments/...` verifies them and streams the object from MinIO, with
+  `Range` support; the ingress routes that path to this service. Expired links answer 410.
+  See docs ADR 0013.
 - **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
   channel holds.

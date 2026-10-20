@@ -15,7 +15,7 @@ mod read_states;
 mod users;
 
 pub use activity::ActivityRepository;
-pub use attachments::{AttachmentStorage, StoredObject};
+pub use attachments::{AttachmentStorage, ObjectRead, StoredObject};
 pub use auth::{AuthError, Authenticator, Principal};
 pub use channel_access::{AccessError, ChannelAccessProvider};
 pub use clock::Clock;

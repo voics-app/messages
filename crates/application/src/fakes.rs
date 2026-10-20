@@ -10,6 +10,7 @@ use discordy_messages_domain::{
     Bucket, ChannelAccess, ChannelId, DeliveryMode, Emoji, Message, MessageDraft, MessageId, Permissions, ReactionRow,
     ReadState, ScanDirection, SnowflakeGenerator, UploadKey, UserId, WorkerId,
 };
+use futures::StreamExt;
 
 use crate::error::PortError;
 use crate::history_reader::HistoryReader;
@@ -319,9 +320,16 @@ impl ChannelAccessProvider for FakeAccess {
 pub struct FakeStorage {
     pub objects: Mutex<HashMap<String, StoredObject>>,
     pub deleted: Mutex<Vec<String>>,
+    /// Bytes served by `open`, keyed like `objects`.
+    pub bodies: Mutex<HashMap<String, Vec<u8>>>,
 }
 
 impl FakeStorage {
+    pub fn put_body(&self, key: &str, body: &[u8]) {
+        self.put(key, body.len() as u64);
+        self.bodies.lock().unwrap().insert(key.to_owned(), body.to_vec());
+    }
+
     pub fn put(&self, key: &str, size: u64) {
         self.objects.lock().unwrap().insert(
             key.to_owned(),
@@ -341,6 +349,35 @@ impl AttachmentStorage for FakeStorage {
 
     async fn stat(&self, key: &UploadKey) -> Result<Option<StoredObject>, PortError> {
         Ok(self.objects.lock().unwrap().get(&key.as_object_key()).cloned())
+    }
+
+    async fn open(&self, key: &UploadKey, range: Option<&str>) -> Result<Option<ObjectRead>, PortError> {
+        let name = key.as_object_key();
+        let Some(body) = self.bodies.lock().unwrap().get(&name).cloned() else {
+            return Ok(None);
+        };
+        let total = body.len() as u64;
+        // Only `bytes=<start>-` is understood by the fake.
+        let start = range
+            .and_then(|r| r.strip_prefix("bytes="))
+            .and_then(|r| r.strip_suffix('-'))
+            .and_then(|r| r.parse::<usize>().ok());
+        let (status, slice, content_range) = match start {
+            Some(start) if start < body.len() => (
+                206,
+                body[start..].to_vec(),
+                Some(format!("bytes {start}-{}/{total}", total - 1)),
+            ),
+            _ => (200, body, None),
+        };
+        Ok(Some(ObjectRead {
+            status,
+            content_type: Some("image/png".into()),
+            content_length: Some(slice.len() as u64),
+            content_range,
+            etag: None,
+            body: futures::stream::once(async move { Ok(bytes::Bytes::from(slice)) }).boxed(),
+        }))
     }
 
     async fn delete(&self, key: &UploadKey) -> Result<(), PortError> {

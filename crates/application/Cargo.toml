@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 discordy-messages-domain.workspace = true
 async-trait.workspace = true
+bytes = "1"
 dashmap.workspace = true
 futures.workspace = true
 thiserror.workspace = true

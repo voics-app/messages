@@ -62,7 +62,9 @@ is reported at once.
 | `MINIO_ENDPOINT` | yes | | MinIO API URL (server-side calls) |
 | `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | yes | | MinIO credentials |
 | `MINIO_BUCKET_ATTACHMENTS` | no | `discordy-attachments` | attachments bucket |
-| `CDN_PUBLIC_URL` | yes | | public CDN base URL; presigned upload and attachment URLs use it |
+| `CDN_PUBLIC_URL` | yes | | public CDN base URL; presigned upload and signed attachment URLs use it |
+| `ATTACHMENT_SIGNING_KEY` | yes | | HMAC key (32+ chars, secret) signing attachment download URLs |
+| `ATTACHMENT_URL_TTL_SECONDS` | no | `86400` | lifetime of a signed download URL |
 | `CORS_ALLOWED_ORIGINS` | no | `null,http://localhost:5173` | comma-separated origins allowed by CORS (`null` is the packaged `file://` client) |
 
 ## Pending owner actions

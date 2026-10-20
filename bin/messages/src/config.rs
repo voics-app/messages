@@ -2,8 +2,10 @@
 //! interface P2) and validated in one pass so every problem is reported at once.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use discordy_messages_domain::WorkerId;
+use discordy_messages_interface::attachment_urls::{DEFAULT_URL_TTL, MIN_KEY_BYTES};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8082";
 const DEFAULT_CORS_ALLOWED_ORIGINS: &str = "null,http://localhost:5173";
@@ -29,6 +31,9 @@ pub struct Config {
     pub minio_secret_key: String,
     pub attachments_bucket: String,
     pub cdn_public_url: String,
+    /// HMAC key that signs attachment download URLs (at least 32 bytes).
+    pub attachment_signing_key: String,
+    pub attachment_url_ttl: Duration,
     /// Origins allowed by CORS; `null` is the origin of the packaged `file://` client.
     pub cors_allowed_origins: Vec<String>,
 }
@@ -75,6 +80,8 @@ impl Config {
             minio_secret_key: reader.required("MINIO_SECRET_KEY"),
             attachments_bucket: reader.optional("MINIO_BUCKET_ATTACHMENTS", "discordy-attachments"),
             cdn_public_url: reader.url("CDN_PUBLIC_URL"),
+            attachment_signing_key: reader.signing_key("ATTACHMENT_SIGNING_KEY"),
+            attachment_url_ttl: reader.seconds("ATTACHMENT_URL_TTL_SECONDS", DEFAULT_URL_TTL),
             cors_allowed_origins: reader.origins("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS),
         };
         if reader.problems.is_empty() {
@@ -143,6 +150,27 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         value
     }
 
+    fn signing_key(&mut self, name: &str) -> String {
+        let value = self.required(name);
+        if !value.is_empty() && value.len() < MIN_KEY_BYTES {
+            self.problem(format!("{name} must be at least {MIN_KEY_BYTES} characters"));
+        }
+        value
+    }
+
+    fn seconds(&mut self, name: &str, default: Duration) -> Duration {
+        match self.value(name) {
+            None => default,
+            Some(raw) => match raw.parse::<u64>() {
+                Ok(seconds) if seconds > 0 => Duration::from_secs(seconds),
+                _ => {
+                    self.problem(format!("{name} must be a positive number of seconds, got `{raw}`"));
+                    default
+                }
+            },
+        }
+    }
+
     fn socket_addr(&mut self, name: &str, default: &str) -> SocketAddr {
         let raw = self.optional(name, default);
         raw.parse().unwrap_or_else(|_| {
@@ -191,6 +219,7 @@ mod tests {
             ("MINIO_ACCESS_KEY", "key"),
             ("MINIO_SECRET_KEY", "secret"),
             ("CDN_PUBLIC_URL", "http://localhost:8000/cdn"),
+            ("ATTACHMENT_SIGNING_KEY", "0123456789abcdef0123456789abcdef"),
         ])
     }
 
@@ -219,6 +248,43 @@ mod tests {
         assert!(message.contains("INTERNAL_SERVICE_TOKEN is required"));
         assert!(message.contains("SNOWFLAKE_WORKER_ID must be an integer from 64 to 127"));
         assert!(message.contains("CDN_PUBLIC_URL must be an http(s) URL"));
+    }
+
+    #[test]
+    fn the_signing_key_is_required_and_long_enough() {
+        let mut vars = complete();
+        vars.insert("ATTACHMENT_SIGNING_KEY", "short");
+        assert!(
+            load(&vars)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("at least 32 characters")
+        );
+        vars.remove("ATTACHMENT_SIGNING_KEY");
+        assert!(
+            load(&vars)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("ATTACHMENT_SIGNING_KEY is required")
+        );
+    }
+
+    #[test]
+    fn the_url_ttl_defaults_to_a_day_and_can_be_overridden() {
+        let mut vars = complete();
+        assert_eq!(load(&vars).unwrap().attachment_url_ttl, Duration::from_secs(86_400));
+        vars.insert("ATTACHMENT_URL_TTL_SECONDS", "600");
+        assert_eq!(load(&vars).unwrap().attachment_url_ttl, Duration::from_secs(600));
+        vars.insert("ATTACHMENT_URL_TTL_SECONDS", "0");
+        assert!(
+            load(&vars)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("ATTACHMENT_URL_TTL_SECONDS")
+        );
     }
 
     #[test]
