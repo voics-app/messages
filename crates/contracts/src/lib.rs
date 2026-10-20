@@ -456,6 +456,18 @@ pub struct ChannelPinsUpdateData {
 pub struct MessageAckData {
     pub channel_id: String,
     pub message_id: String,
+    pub mention_count: u32,
+}
+
+/// Optional body of `POST /channels/{id}/messages/{mid}/ack`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AckRequest {
+    /// Set the marker to exactly this message, even backwards (Mark Unread).
+    #[serde(default)]
+    pub manual: bool,
+    /// Unread mentions to keep after a manual ack.
+    #[serde(default)]
+    pub mention_count: u32,
 }
 
 #[cfg(test)]

@@ -273,6 +273,16 @@ async fn reactions_pins_and_acks_round_trip() {
 
     let (status, ack) = call(&app, Method::POST, &format!("{base}/ack"), Some(ALICE_TOKEN), None).await;
     assert_eq!((status, &ack["token"]), (StatusCode::OK, &Value::Null));
+
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("{base}/ack"),
+        Some(ALICE_TOKEN),
+        Some(json!({"manual": true, "mention_count": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
