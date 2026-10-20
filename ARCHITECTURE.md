@@ -63,6 +63,8 @@ C4Component
   `{CDN}/attachments/{channel}/{id}/{file}?ex&is&hm` (HMAC-SHA256, 24 h, re-signed on every
   serialization). `GET /attachments/...` verifies them and streams the object from MinIO, with
   `Range` support; the ingress routes that path to this service. Expired links answer 410.
-  See docs ADR 0013.
+  `POST /channels/{id}/attachments/refresh-urls` re-signs object keys or old URLs of that channel
+  for members who can read it (Ephemeral recipients get their links there).
+  See docs ADR 0017.
 - **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
   channel holds.

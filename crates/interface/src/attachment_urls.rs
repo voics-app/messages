@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use discordy_messages_application::ports::Clock;
-use discordy_messages_domain::{Attachment, ChannelId};
+use discordy_messages_domain::{Attachment, UploadKey};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -86,16 +86,21 @@ impl AttachmentUrls {
     }
 
     /// The signed download URL of `attachment`, valid from now for the TTL.
-    pub fn url(&self, channel_id: ChannelId, attachment: &Attachment) -> String {
-        let name = attachment.filename.as_str();
-        let path = format!("{channel_id}/{}/{name}", attachment.id);
+    pub fn url(&self, channel_id: discordy_messages_domain::ChannelId, attachment: &Attachment) -> String {
+        self.url_for(&attachment.key(channel_id))
+    }
+
+    /// The signed download URL of the object stored under `key`.
+    pub fn url_for(&self, key: &UploadKey) -> String {
+        let (channel_id, attachment_id) = (key.channel_id, key.attachment_id);
+        let name = key.filename.as_str();
+        let path = format!("{channel_id}/{attachment_id}/{name}");
         let issued = self.now_s();
         let expires = issued + self.ttl.as_secs();
         let mac = hex::encode(self.mac(&path, expires, issued).finalize().into_bytes());
         format!(
-            "{}/attachments/{channel_id}/{}/{}?ex={expires:x}&is={issued:x}&hm={mac}",
+            "{}/attachments/{channel_id}/{attachment_id}/{}?ex={expires:x}&is={issued:x}&hm={mac}",
             self.base,
-            attachment.id,
             encode_segment(name),
         )
     }

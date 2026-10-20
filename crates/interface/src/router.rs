@@ -40,7 +40,11 @@ pub fn router(state: AppState) -> Router {
             "/channels/{channel_id}/pins/{message_id}",
             put(pins::pin).delete(pins::unpin),
         )
-        .route("/channels/{channel_id}/attachments", post(attachments::create_slots));
+        .route("/channels/{channel_id}/attachments", post(attachments::create_slots))
+        .route(
+            "/channels/{channel_id}/attachments/refresh-urls",
+            post(attachments::refresh_urls),
+        );
 
     let internal = Router::new()
         .route("/channels/{channel_id}/messages", post(internal::create_message))

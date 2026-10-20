@@ -724,3 +724,43 @@ async fn a_validly_signed_url_for_a_missing_object_is_not_found() {
     let (status, _, _) = fetch(&app, &path, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn refresh_urls_signs_keys_for_members_and_refuses_foreign_channels() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY);
+    let app = app(&harness);
+    let uri = format!("/api/v1/channels/{CHANNEL}/attachments/refresh-urls");
+    let key = format!("attachments/{CHANNEL}/77/blob.bin");
+    harness.storage.put_body(&key, b"ciphertext");
+
+    let (status, _) = call(&app, Method::POST, &uri, None, Some(json!({"attachment_urls": [key]}))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachment_urls": [key.clone()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["refreshed_urls"][0]["original"], key);
+    let fresh = body["refreshed_urls"][0]["refreshed"].as_str().unwrap();
+    let path = fresh.strip_prefix(CDN_PREFIX).expect("under the CDN");
+    let (status, _, bytes) = fetch(&app, path, None).await;
+    assert_eq!((status, bytes), (StatusCode::OK, b"ciphertext".to_vec()));
+
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachment_urls": ["attachments/12345/77/blob.bin"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

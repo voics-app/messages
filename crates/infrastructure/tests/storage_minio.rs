@@ -3,9 +3,9 @@
 mod support;
 
 use discordy_messages_application::ports::AttachmentStorage;
-use futures::StreamExt;
 use discordy_messages_domain::{AttachmentFilename, Snowflake, UploadKey};
 use discordy_messages_infrastructure::storage::{S3AttachmentStorage, S3Settings};
+use futures::StreamExt;
 
 #[tokio::test]
 async fn presigned_uploads_can_be_stat_ed_and_deleted() {
