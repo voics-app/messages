@@ -206,7 +206,13 @@ mod tests {
         let clock = Arc::new(FakeClock(AtomicU64::new(START_MS)));
         let users = Arc::new(FakeUsers::default());
         users.add(ALICE, "alice");
-        let publisher = EnvelopePublisher::new(sink.clone(), clock, AttachmentUrls::new("http://cdn", "b"), users);
+        let urls = AttachmentUrls::new(
+            "http://cdn",
+            "unit-test-signing-key-0123456789abcdef",
+            std::time::Duration::from_secs(60),
+            clock.clone(),
+        );
+        let publisher = EnvelopePublisher::new(sink.clone(), clock, urls, users);
         (publisher, sink)
     }
 

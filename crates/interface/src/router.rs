@@ -6,7 +6,7 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 
-use crate::routes::{attachments, health, internal, messages, pins, reactions};
+use crate::routes::{attachments, download, health, internal, messages, pins, reactions};
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -40,7 +40,11 @@ pub fn router(state: AppState) -> Router {
             "/channels/{channel_id}/pins/{message_id}",
             put(pins::pin).delete(pins::unpin),
         )
-        .route("/channels/{channel_id}/attachments", post(attachments::create_slots));
+        .route("/channels/{channel_id}/attachments", post(attachments::create_slots))
+        .route(
+            "/channels/{channel_id}/attachments/refresh-urls",
+            post(attachments::refresh_urls),
+        );
 
     let internal = Router::new()
         .route("/channels/{channel_id}/messages", post(internal::create_message))
@@ -51,6 +55,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api/v1", public)
         .nest("/internal/v1", internal)
+        .route(
+            "/attachments/{channel_id}/{attachment_id}/{filename}",
+            get(download::download),
+        )
         .route("/healthz", get(health::live))
         .route("/readyz", get(health::ready))
         .route("/metrics", get(health::metrics))

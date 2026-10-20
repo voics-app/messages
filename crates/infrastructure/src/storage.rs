@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use discordy_messages_application::PortError;
-use discordy_messages_application::ports::{AttachmentStorage, StoredObject};
+use discordy_messages_application::ports::{AttachmentStorage, ObjectRead, StoredObject};
 use discordy_messages_domain::UploadKey;
+use futures::StreamExt;
 use reqwest::StatusCode;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 use url::Url;
@@ -117,6 +118,43 @@ impl AttachmentStorage for S3AttachmentStorage {
             }
             status => Err(port_error(format!("HEAD object returned {status}"))),
         }
+    }
+
+    async fn open(&self, key: &UploadKey, range: Option<&str>) -> Result<Option<ObjectRead>, PortError> {
+        let url = self
+            .internal
+            .get_object(Some(&self.credentials), &key.as_object_key())
+            .sign(SERVER_URL_TTL);
+        let mut request = self.http.get(url);
+        if let Some(range) = range {
+            request = request.header(reqwest::header::RANGE, range);
+        }
+        let response = request.send().await.map_err(port_error)?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !matches!(
+            status,
+            StatusCode::OK | StatusCode::PARTIAL_CONTENT | StatusCode::RANGE_NOT_SATISFIABLE
+        ) {
+            return Err(port_error(format!("GET object returned {status}")));
+        }
+        let header = |name| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        };
+        Ok(Some(ObjectRead {
+            status: status.as_u16(),
+            content_type: header(reqwest::header::CONTENT_TYPE),
+            content_length: header(reqwest::header::CONTENT_LENGTH).and_then(|v| v.parse().ok()),
+            content_range: header(reqwest::header::CONTENT_RANGE),
+            etag: header(reqwest::header::ETAG),
+            body: response.bytes_stream().map(|chunk| chunk.map_err(port_error)).boxed(),
+        }))
     }
 
     async fn delete(&self, key: &UploadKey) -> Result<(), PortError> {

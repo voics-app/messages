@@ -239,6 +239,24 @@ pub struct BulkDeleteRequest {
     pub messages: Vec<String>,
 }
 
+/// `POST /channels/{id}/attachments/refresh-urls`: object keys or earlier CDN
+/// URLs of this channel's attachments, to be re-signed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RefreshUrlsRequest {
+    pub attachment_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshUrlsResponse {
+    pub refreshed_urls: Vec<RefreshedUrlDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshedUrlDto {
+    pub original: String,
+    pub refreshed: String,
+}
+
 /// `POST /channels/{id}/attachments`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct UploadRequestBody {
