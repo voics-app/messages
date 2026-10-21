@@ -178,6 +178,11 @@ pub struct AttachmentDto {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description: Option<String>,
+    /// `AttachmentFlags` bit set; omitted when zero.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub flags: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +222,12 @@ pub struct AttachmentReferenceDto {
     #[serde(default)]
     pub filename: Option<String>,
     pub uploaded_filename: String,
+    /// Alt text.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `AttachmentFlags` bits; only IS_SPOILER (8) is kept.
+    #[serde(default)]
+    pub flags: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,6 +242,9 @@ pub struct EditMessageRequest {
     pub content: Option<String>,
     #[serde(default)]
     pub embeds: Option<Vec<Value>>,
+    /// Only SUPPRESS_EMBEDS (4) is honoured.
+    #[serde(default)]
+    pub flags: Option<u32>,
 }
 
 /// `POST /channels/{id}/messages/bulk-delete`.
@@ -348,6 +362,13 @@ pub struct InternalCreateMessageRequest {
     /// Recipients of an ephemeral message (the invoking user).
     #[serde(default)]
     pub target_user_ids: Option<Vec<String>>,
+    /// Group DM system message type: 1 RECIPIENT_ADD, 2 RECIPIENT_REMOVE,
+    /// 4 CHANNEL_NAME_CHANGE, 5 CHANNEL_ICON_CHANGE.
+    #[serde(default, rename = "type")]
+    pub message_type: Option<u8>,
+    /// The user a type 1/2 system message is about.
+    #[serde(default)]
+    pub target_user_id: Option<String>,
 }
 
 /// api: `POST /internal/v1/auth/introspect`.
@@ -456,6 +477,18 @@ pub struct ChannelPinsUpdateData {
 pub struct MessageAckData {
     pub channel_id: String,
     pub message_id: String,
+    pub mention_count: u32,
+}
+
+/// Optional body of `POST /channels/{id}/messages/{mid}/ack`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AckRequest {
+    /// Set the marker to exactly this message, even backwards (Mark Unread).
+    #[serde(default)]
+    pub manual: bool,
+    /// Unread mentions to keep after a manual ack.
+    #[serde(default)]
+    pub mention_count: u32,
 }
 
 #[cfg(test)]

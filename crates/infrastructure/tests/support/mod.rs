@@ -34,6 +34,15 @@ pub struct Scylla {
     pub session: Arc<Session>,
 }
 
+/// ScyllaDB aborts at boot without SSE4.2 and PCLMULQDQ; virtual CPUs such as
+/// QEMU's default model lack them. Non-Linux hosts are assumed capable.
+pub fn cpu_supports_scylla() -> bool {
+    match std::fs::read_to_string("/proc/cpuinfo") {
+        Ok(info) => info.contains("pclmulqdq") && info.contains("sse4_2"),
+        Err(_) => true,
+    }
+}
+
 /// Starts a single-node ScyllaDB in developer mode and returns a migrated
 /// session bound to `keyspace`.
 pub async fn start_scylla(keyspace: &str) -> Scylla {
@@ -91,7 +100,7 @@ pub async fn start_minio() -> Minio {
         .with_env_var("MINIO_ROOT_PASSWORD", MINIO_PASSWORD)
         .with_cmd(["server", "/data"])
         .with_container_name(container_name("minio"))
-        .with_startup_timeout(Duration::from_secs(120))
+        .with_startup_timeout(Duration::from_secs(300))
         .start()
         .await
         .expect("start minio");
@@ -129,7 +138,7 @@ pub async fn start_redpanda() -> Redpanda {
         ])
         .with_mapped_port(port, 9092.tcp())
         .with_container_name(container_name("redpanda"))
-        .with_startup_timeout(Duration::from_secs(120))
+        .with_startup_timeout(Duration::from_secs(300))
         .start()
         .await
         .expect("start redpanda");

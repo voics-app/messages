@@ -27,6 +27,13 @@ impl ReadState {
         self.mention_count = 0;
     }
 
+    /// Sets the read position to exactly `message_id`, moving it backwards when
+    /// needed (a manual "Mark Unread"), and keeps `mention_count` unread mentions.
+    pub fn set_position(&mut self, message_id: MessageId, mention_count: u32) {
+        self.last_read_id = Some(message_id);
+        self.mention_count = mention_count;
+    }
+
     /// Counts a new mention unless the user has already read past it.
     pub fn record_mention(&mut self, message_id: MessageId) {
         if self.last_read_id.is_none_or(|last| message_id > last) {
@@ -59,6 +66,15 @@ mod tests {
         s.acknowledge(Snowflake::new(20));
         s.acknowledge(Snowflake::new(10));
         assert_eq!(s.last_read_id, Some(Snowflake::new(20)));
+    }
+
+    #[test]
+    fn set_position_can_move_backwards() {
+        let mut s = state();
+        s.acknowledge(Snowflake::new(20));
+        s.set_position(Snowflake::new(10), 2);
+        assert_eq!(s.last_read_id, Some(Snowflake::new(10)));
+        assert_eq!(s.mention_count, 2);
     }
 
     #[test]
