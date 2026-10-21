@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use discordy_messages_domain::snowflake::DISCORDY_EPOCH_MS;
 use discordy_messages_domain::{
-    Bucket, ChannelAccess, ChannelId, DeliveryMode, Emoji, Message, MessageDraft, MessageId, Permissions, ReactionRow,
-    ReadState, ScanDirection, SnowflakeGenerator, UploadKey, UserId, WorkerId,
+    Bucket, ChannelAccess, ChannelId, DeliveryMode, Emoji, GuildId, IndexedMessage, Message, MessageDraft, MessageId,
+    Permissions, ReactionRow, ReadState, ScanDirection, SnowflakeGenerator, SortOrder, UploadKey, UserId, WorkerId,
 };
 use futures::StreamExt;
 
@@ -104,6 +104,10 @@ impl MessageRepository for InMemoryMessages {
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {
         Ok(self.last.lock().unwrap().get(&channel_id).copied())
+    }
+
+    async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError> {
+        Ok(self.last.lock().unwrap().iter().map(|(c, m)| (*c, *m)).collect())
     }
 }
 
@@ -282,9 +286,15 @@ pub struct FakeAccess {
     pub channel: Mutex<Result<ChannelAccess, AccessError>>,
     /// The uncached answer (`refresh`); falls back to `access` when unset.
     pub fresh: Mutex<Option<Result<ChannelAccess, AccessError>>>,
+    /// Channels answered with empty permissions.
+    pub denied: Mutex<std::collections::HashSet<ChannelId>>,
 }
 
 impl FakeAccess {
+    pub fn deny_channel(&self, channel_id: ChannelId) {
+        self.denied.lock().unwrap().insert(channel_id);
+    }
+
     pub fn set_permissions(&self, bits: u64) {
         if let Ok(access) = self.access.lock().unwrap().as_mut() {
             access.permissions = Permissions::new(bits);
@@ -300,8 +310,12 @@ impl FakeAccess {
 
 #[async_trait]
 impl ChannelAccessProvider for FakeAccess {
-    async fn access(&self, _channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
-        self.access.lock().unwrap().clone()
+    async fn access(&self, channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
+        let mut answer = self.access.lock().unwrap().clone();
+        if let (true, Ok(access)) = (self.denied.lock().unwrap().contains(&channel_id), answer.as_mut()) {
+            access.permissions = Permissions::new(0);
+        }
+        answer
     }
 
     async fn channel(&self, _channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {
@@ -476,6 +490,140 @@ impl UserDirectory for FakeUsers {
     }
 }
 
+/// An in-memory search index with the semantics of the SQL one: every word of
+/// the text must occur (case-insensitive), all filters combine with AND.
+pub struct FakeSearchIndex {
+    rows: Mutex<BTreeMap<(ChannelId, MessageId), IndexedMessage>>,
+    state: Mutex<BackfillState>,
+}
+
+impl Default for FakeSearchIndex {
+    fn default() -> Self {
+        Self {
+            rows: Mutex::default(),
+            state: Mutex::new(BackfillState::Complete),
+        }
+    }
+}
+
+impl FakeSearchIndex {
+    pub fn index_message(&self, message: &Message, guild_id: Option<GuildId>) {
+        if let Some(entry) = IndexedMessage::from_message(message, guild_id) {
+            self.rows
+                .lock()
+                .unwrap()
+                .insert((entry.channel_id, entry.message_id), entry);
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn set_state(&self, state: BackfillState) {
+        *self.state.lock().unwrap() = state;
+    }
+}
+
+#[async_trait]
+impl SearchIndex for FakeSearchIndex {
+    async fn apply(&self, ops: &[IndexOp], _checkpoint: Option<&Checkpoint>) -> Result<(), PortError> {
+        let mut rows = self.rows.lock().unwrap();
+        for op in ops {
+            match op {
+                IndexOp::Upsert(entry) => {
+                    let key = (entry.channel_id, entry.message_id);
+                    if rows.get(&key).is_none_or(|old| old.edited_at_ms <= entry.edited_at_ms) {
+                        rows.insert(key, entry.clone());
+                    }
+                }
+                IndexOp::Delete {
+                    channel_id,
+                    message_ids,
+                } => {
+                    for id in message_ids {
+                        rows.remove(&(*channel_id, *id));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn checkpoint(&self, _topic: &str, _partition: i32) -> Result<Option<i64>, PortError> {
+        Ok(None)
+    }
+
+    async fn guild_channels(&self, guild_id: GuildId, only: &[ChannelId]) -> Result<Vec<ChannelId>, PortError> {
+        let mut channels: Vec<ChannelId> = self
+            .rows
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|e| e.guild_id == Some(guild_id) && (only.is_empty() || only.contains(&e.channel_id)))
+            .map(|e| e.channel_id)
+            .collect();
+        channels.sort();
+        channels.dedup();
+        Ok(channels)
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<SearchPage, PortError> {
+        let f = &request.filters;
+        let words: Vec<String> = f
+            .content
+            .iter()
+            .flat_map(|c| c.split_whitespace().map(str::to_lowercase).collect::<Vec<_>>())
+            .collect();
+        let mut hits: Vec<SearchHit> = self
+            .rows
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|e| request.channels.contains(&e.channel_id))
+            .filter(|e| words.iter().all(|w| e.content.to_lowercase().contains(w.as_str())))
+            .filter(|e| f.author_ids.is_empty() || f.author_ids.contains(&e.author_id))
+            .filter(|e| f.mentions.iter().all(|m| e.mentions.contains(m)))
+            .filter(|e| e.has.covers(f.has))
+            .filter(|e| f.min_id.is_none_or(|min| e.message_id > min))
+            .filter(|e| f.max_id.is_none_or(|max| e.message_id < max))
+            .filter(|e| match &request.pinned {
+                None => true,
+                Some(PinnedFilter::Only(ids)) => ids.contains(&e.message_id),
+                Some(PinnedFilter::Except(ids)) => !ids.contains(&e.message_id),
+            })
+            .map(|e| SearchHit {
+                channel_id: e.channel_id,
+                message_id: e.message_id,
+            })
+            .collect();
+        hits.sort_by_key(|h| h.message_id);
+        if f.sort_order == SortOrder::Desc {
+            hits.reverse();
+        }
+        let total = hits.len() as u64;
+        let hits = hits
+            .into_iter()
+            .skip(f.offset as usize)
+            .take(f.limit as usize)
+            .collect();
+        Ok(SearchPage { total, hits })
+    }
+
+    async fn backfill_state(&self) -> Result<BackfillState, PortError> {
+        Ok(*self.state.lock().unwrap())
+    }
+
+    async fn set_backfill_state(&self, state: BackfillState) -> Result<(), PortError> {
+        *self.state.lock().unwrap() = state;
+        Ok(())
+    }
+}
+
 /// A link unfurler answering from a map and counting fetches.
 #[derive(Default)]
 pub struct FakeUnfurler {
@@ -559,6 +707,7 @@ pub struct Harness {
     pub events: Arc<RecordingEvents>,
     pub clock: Arc<FakeClock>,
     pub users: Arc<FakeUsers>,
+    pub search: Arc<FakeSearchIndex>,
     pub unfurler: Arc<FakeUnfurler>,
     pub media: Arc<FakeMedia>,
     pub ports: MessagingPorts,
@@ -590,6 +739,7 @@ impl Harness {
             access: Mutex::new(Ok(guild_access(MEMBER))),
             channel: Mutex::new(Ok(guild_access(MEMBER))),
             fresh: Mutex::new(None),
+            denied: Mutex::default(),
         });
         let messages = Arc::new(InMemoryMessages::default());
         let reactions = Arc::new(InMemoryReactions::default());
@@ -605,6 +755,7 @@ impl Harness {
         let users = Arc::new(FakeUsers::default());
         users.add(ALICE, "alice");
         users.add(BOB, "bob");
+        let search = Arc::new(FakeSearchIndex::default());
         let unfurler = Arc::new(FakeUnfurler::default());
         let ports = MessagingPorts {
             access: access.clone(),
@@ -619,6 +770,7 @@ impl Harness {
             clock: clock.clone(),
             history: Arc::new(HistoryReader::new(messages.clone(), reactions.clone())),
             users: users.clone(),
+            search: search.clone(),
             unfurler: unfurler.clone(),
         };
         Self {
@@ -631,6 +783,7 @@ impl Harness {
             events,
             clock,
             users,
+            search,
             unfurler,
             media: Arc::new(FakeMedia::default()),
             ports,

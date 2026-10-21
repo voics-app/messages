@@ -20,6 +20,8 @@ pub enum AppError {
     Domain(#[from] DomainError),
     #[error("dependency unavailable: {0}")]
     Unavailable(#[from] PortError),
+    #[error("rate limited, retry in {retry_after_ms} ms")]
+    RateLimited { retry_after_ms: u64 },
 }
 
 pub type AppResult<T> = Result<T, AppError>;

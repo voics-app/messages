@@ -141,6 +141,19 @@ pub struct MessageDto {
     pub interaction_metadata: Option<InteractionMetadataDto>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub author_override: Option<AuthorOverrideDto>,
+    /// Search results only: true for the match, absent for its context.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub hit: Option<bool>,
+}
+
+/// `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageSearchResponse {
+    pub total_results: u64,
+    /// One group per hit, oldest message first; the hit has `hit: true`.
+    pub messages: Vec<Vec<MessageDto>>,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub index_building: bool,
 }
 
 /// The interaction a message answers (Discord's `interaction_metadata`, id only).

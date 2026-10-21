@@ -147,3 +147,33 @@ pub async fn start_redpanda() -> Redpanda {
         broker: format!("127.0.0.1:{port}"),
     }
 }
+
+pub const POSTGRES_IMAGE: (&str, &str) = ("postgres", "17-alpine");
+
+pub struct Postgres {
+    pub container: ContainerAsync<GenericImage>,
+    pub url: String,
+}
+
+/// Starts PostgreSQL on a random host port.
+pub async fn start_postgres() -> Postgres {
+    let container = GenericImage::new(POSTGRES_IMAGE.0, POSTGRES_IMAGE.1)
+        .with_exposed_port(5432.tcp())
+        .with_wait_for(WaitFor::message_on_either_std(
+            "database system is ready to accept connections",
+        ))
+        .with_env_var("POSTGRES_PASSWORD", "messages-it")
+        .with_env_var("POSTGRES_DB", "search")
+        .with_container_name(container_name("postgres"))
+        .with_startup_timeout(Duration::from_secs(120))
+        .start()
+        .await
+        .expect("start postgres");
+    // The image restarts the server once after initialising; wait for that second start.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let port = container.get_host_port_ipv4(5432.tcp()).await.expect("postgres port");
+    Postgres {
+        container,
+        url: format!("postgres://postgres:messages-it@127.0.0.1:{port}/search"),
+    }
+}
