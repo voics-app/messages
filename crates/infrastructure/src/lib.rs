@@ -5,3 +5,4 @@ pub mod kafka;
 pub mod scylla;
 pub mod storage;
 pub mod system;
+pub mod unfurl;

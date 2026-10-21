@@ -2,12 +2,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
+use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
     Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, InteractionLink, Message,
     MessageDraft, MessageId, MessageKind, ReadState, UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
+use super::UnfurlLinks;
 use super::support::{announce, checked_access, event};
 use crate::error::AppResult;
 use crate::ports::{
@@ -20,6 +22,10 @@ use crate::views::MessageView;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachmentReference {
     pub uploaded_filename: String,
+    /// Alt text.
+    pub description: Option<String>,
+    /// Requested `ATTACHMENT_FLAG_*` bits (only the spoiler bit is kept).
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -54,6 +60,7 @@ pub struct CreateMessage {
     storage: Arc<dyn AttachmentStorage>,
     events: Arc<dyn EventPublisher>,
     ids: Arc<dyn IdGenerator>,
+    unfurl: Arc<UnfurlLinks>,
 }
 
 impl CreateMessage {
@@ -66,6 +73,7 @@ impl CreateMessage {
             storage: ports.storage.clone(),
             events: ports.events.clone(),
             ids: ports.ids.clone(),
+            unfurl: Arc::new(UnfurlLinks::new(ports)),
         }
     }
 
@@ -112,6 +120,7 @@ impl CreateMessage {
             ),
         )
         .await;
+        self.unfurl.spawn(&message);
         Ok(MessageView::without_reactions(message))
     }
 
@@ -191,11 +200,13 @@ impl CreateMessage {
             }
             attachments.push(Attachment {
                 id: key.attachment_id,
-                filename: key.filename,
                 content_type: stored.content_type,
                 size: stored.size,
                 width: None,
                 height: None,
+                description: validate_description(reference.description.as_deref())?,
+                flags: upload_flags(&key.filename, reference.flags),
+                filename: key.filename,
             });
         }
         Ok(attachments)
@@ -443,6 +454,8 @@ mod tests {
         let mut cmd = command("");
         cmd.attachments = vec![AttachmentReference {
             uploaded_filename: format!("attachments/{CHANNEL}/77/cat.png"),
+            description: None,
+            flags: 0,
         }];
         assert!(CreateMessage::new(&h.ports).execute(cmd.clone()).await.is_err());
 
@@ -452,6 +465,64 @@ mod tests {
         assert_eq!(attachment.id, Snowflake::new(77));
         assert_eq!(attachment.size, 1234);
         assert_eq!(attachment.filename.as_str(), "cat.png");
+    }
+
+    #[tokio::test]
+    async fn attachments_keep_alt_text_and_spoiler_flags() {
+        let h = Harness::new();
+        for name in ["a.png", "SPOILER_b.png"] {
+            h.storage.put(&format!("attachments/{CHANNEL}/77/{name}"), 10);
+        }
+        let reference = |name: &str, description: Option<&str>, flags| AttachmentReference {
+            uploaded_filename: format!("attachments/{CHANNEL}/77/{name}"),
+            description: description.map(str::to_owned),
+            flags,
+        };
+        let mut cmd = command("");
+        cmd.attachments = vec![reference("a.png", Some(" a red cat "), 8)];
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        let attachment = &view.message.attachments[0];
+        assert_eq!(attachment.description.as_deref(), Some("a red cat"));
+        assert!(attachment.is_spoiler());
+
+        let mut cmd = command("");
+        cmd.attachments = vec![reference("SPOILER_b.png", None, 0)];
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        assert!(view.message.attachments[0].is_spoiler());
+
+        let mut cmd = command("");
+        cmd.attachments = vec![reference("a.png", Some(&"x".repeat(1025)), 0)];
+        assert!(CreateMessage::new(&h.ports).execute(cmd).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn creating_a_message_with_a_link_unfurls_it_in_the_background() {
+        let h = Harness::new();
+        h.unfurler.set("https://a.example/", r#"{"type":"link","title":"A"}"#);
+        let view = CreateMessage::new(&h.ports)
+            .execute(command("see https://a.example/"))
+            .await
+            .unwrap();
+        assert!(view.message.embeds.is_empty(), "the reply does not wait for the fetch");
+        for _ in 0..200 {
+            if h.events.kinds().len() == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let kinds = h.events.kinds();
+        assert!(matches!(&kinds[1], MessageEventKind::Updated { message } if message.embeds.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn ephemeral_relays_are_never_unfurled() {
+        let h = Harness::new();
+        h.unfurler.set("https://a.example/", r#"{"type":"link"}"#);
+        let mut cmd = ephemeral_reply(vec![ALICE]);
+        cmd.content = "https://a.example/".into();
+        CreateMessage::new(&h.ports).execute_internal(cmd).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(h.unfurler.calls(), 0);
     }
 
     #[tokio::test]

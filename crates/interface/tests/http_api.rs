@@ -63,6 +63,7 @@ fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
             Duration::from_secs(3600),
             harness.clock.clone(),
         ),
+        harness.media.clone(),
         probes,
     ))
 }
@@ -773,4 +774,133 @@ async fn refresh_urls_signs_keys_for_members_and_refuses_foreign_channels() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn attachments_carry_alt_text_and_the_spoiler_flag() {
+    let harness = Harness::new();
+    harness
+        .access
+        .set_permissions(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::ATTACH_FILES);
+    let app = app(&harness);
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/78/pic.png"), b"x");
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "", "attachments": [
+            {"id": 0, "uploaded_filename": format!("attachments/{CHANNEL}/78/pic.png"),
+             "description": "a red pic", "flags": 8}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["attachments"][0]["description"], "a red pic");
+    assert_eq!(created["attachments"][0]["flags"], 8);
+}
+
+#[tokio::test]
+async fn patching_flags_suppresses_and_restores_embeds() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let (_, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "hi"})),
+    )
+    .await;
+    let uri = format!("{}/{}", messages_uri(), created["id"].as_str().unwrap());
+    let (status, patched) = call(&app, Method::PATCH, &uri, Some(ALICE_TOKEN), Some(json!({"flags": 4}))).await;
+    assert_eq!(status, StatusCode::OK, "{patched}");
+    assert_eq!(patched["flags"], 4);
+    assert_eq!(patched["edited_timestamp"], Value::Null);
+    let (_, restored) = call(&app, Method::PATCH, &uri, Some(ALICE_TOKEN), Some(json!({"flags": 0}))).await;
+    assert_eq!(restored["flags"], 0);
+    let (status, _) = call(&app, Method::PATCH, &uri, Some("Bearer bob"), Some(json!({"flags": 4}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn embeds_reach_clients_with_media_proxy_urls_and_the_proxy_serves_them() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    harness.media.put("https://img.example/a.png", "image/png", b"PNGDATA");
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "hi", "embeds": [
+            {"type": "link", "url": "https://site.example/", "thumbnail": {"url": "https://img.example/a.png"}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let thumb = &created["embeds"][0]["thumbnail"];
+    assert_eq!(thumb["url"], "https://img.example/a.png");
+    let proxy = thumb["proxy_url"].as_str().unwrap();
+    assert!(proxy.starts_with(&format!("{CDN_PREFIX}/external/")), "{proxy}");
+
+    let path = proxy.strip_prefix(CDN_PREFIX).unwrap();
+    let (status, headers, body) = fetch(&app, path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"PNGDATA");
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(headers["content-security-policy"].to_str().unwrap().contains("sandbox"));
+}
+
+#[tokio::test]
+async fn the_media_proxy_refuses_unsigned_tampered_and_forbidden_requests() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let token = |url: &str| {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(url)
+    };
+    let (status, _, _) = fetch(&app, &format!("/external/{}", token("https://img.example/a.png")), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "unsigned");
+
+    // A signed URL retargeted at the metadata address keeps its old signature.
+    let signed = AttachmentUrls::new(
+        "http://cdn/cdn",
+        SIGNING_KEY,
+        Duration::from_secs(3600),
+        harness.clock.clone(),
+    )
+    .proxy_url("https://img.example/a.png");
+    let (_, query) = signed.split_once('?').unwrap();
+    let forged = format!(
+        "/external/{}?{query}",
+        token("http://169.254.169.254/latest/meta-data/")
+    );
+    let (status, _, _) = fetch(&app, &forged, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "tampered");
+    assert!(
+        harness.media.opened.lock().unwrap().is_empty(),
+        "nothing was fetched upstream"
+    );
+
+    // A properly signed request for a forbidden address is still refused by the guard.
+    let signed_bad = AttachmentUrls::new(
+        "http://cdn/cdn",
+        SIGNING_KEY,
+        Duration::from_secs(3600),
+        harness.clock.clone(),
+    )
+    .proxy_url("http://169.254.169.254/latest/meta-data/");
+    let (status, _, _) = fetch(&app, signed_bad.strip_prefix("http://cdn/cdn").unwrap(), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "guard");
+    let signed_missing = AttachmentUrls::new(
+        "http://cdn/cdn",
+        SIGNING_KEY,
+        Duration::from_secs(3600),
+        harness.clock.clone(),
+    )
+    .proxy_url("https://img.example/gone.png");
+    let (status, _, _) = fetch(&app, signed_missing.strip_prefix("http://cdn/cdn").unwrap(), None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }

@@ -3,7 +3,7 @@
 use crate::attachment::{Attachment, MAX_ATTACHMENTS_PER_MESSAGE};
 use crate::error::{DomainError, FieldError};
 use crate::mentions::Mentions;
-use crate::message_origin::{InteractionLink, WebhookAuthor};
+use crate::message_origin::{FLAG_SUPPRESS_EMBEDS, InteractionLink, WebhookAuthor};
 use crate::{ChannelId, MessageId, UserId};
 
 /// Maximum content length in characters (Discord parity).
@@ -81,6 +81,20 @@ pub struct MessageDraft {
 pub struct MessageEdit {
     pub content: Option<String>,
     pub embeds: Option<Vec<String>>,
+    /// Only the SUPPRESS_EMBEDS bit is honoured; other bits are ignored.
+    pub flags: Option<u32>,
+}
+
+impl MessageEdit {
+    /// Whether the edit rewrites the message body (as opposed to only flags).
+    pub fn changes_body(&self) -> bool {
+        self.content.is_some() || self.embeds.is_some()
+    }
+
+    /// The requested SUPPRESS_EMBEDS state, if the edit carries flags.
+    pub fn suppress_embeds(&self) -> Option<bool> {
+        self.flags.map(|flags| flags & FLAG_SUPPRESS_EMBEDS != 0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +183,19 @@ impl Message {
         Ok(())
     }
 
+    pub fn embeds_suppressed(&self) -> bool {
+        self.flags & FLAG_SUPPRESS_EMBEDS != 0
+    }
+
+    /// Sets or clears SUPPRESS_EMBEDS. Not an edit: `edited_at` is untouched.
+    pub fn set_embeds_suppressed(&mut self, suppressed: bool) {
+        if suppressed {
+            self.flags |= FLAG_SUPPRESS_EMBEDS;
+        } else {
+            self.flags &= !FLAG_SUPPRESS_EMBEDS;
+        }
+    }
+
     /// Creation time, derived from the Snowflake.
     pub fn timestamp_ms(&self) -> u64 {
         self.id.unix_millis()
@@ -233,6 +260,8 @@ mod tests {
             size: 10,
             width: None,
             height: None,
+            description: None,
+            flags: 0,
         }
     }
 
@@ -294,6 +323,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some("bye <@8>".into()),
             embeds: None,
+            flags: None,
         };
         message.apply_edit(AUTHOR, edit, false, 1234).unwrap();
         assert_eq!(message.content, "bye <@8>");
@@ -308,6 +338,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some("hacked".into()),
             embeds: None,
+            flags: None,
         };
         assert_eq!(
             message.apply_edit(Snowflake::new(6), edit, false, 1),
@@ -322,6 +353,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some(String::new()),
             embeds: None,
+            flags: None,
         };
         assert!(message.apply_edit(AUTHOR, edit, false, 1).is_err());
         assert_eq!(message.content, "hi");
@@ -354,6 +386,30 @@ mod tests {
         assert_eq!(message.webhook, None);
         assert_eq!(message.interaction, None);
         assert_eq!(message.flags, 0);
+    }
+
+    #[test]
+    fn suppressing_embeds_toggles_only_its_bit() {
+        let mut d = draft("hi");
+        d.flags = 1 << 6;
+        let mut message = compose(d).unwrap();
+        message.set_embeds_suppressed(true);
+        assert!(message.embeds_suppressed());
+        assert_eq!(message.flags, (1 << 6) | 4);
+        message.set_embeds_suppressed(false);
+        assert_eq!(message.flags, 1 << 6);
+        assert_eq!(message.edited_at_ms, None);
+    }
+
+    #[test]
+    fn flag_only_edits_do_not_change_the_body() {
+        let edit = MessageEdit {
+            flags: Some(4),
+            ..MessageEdit::default()
+        };
+        assert!(!edit.changes_body());
+        assert_eq!(edit.suppress_embeds(), Some(true));
+        assert_eq!(MessageEdit::default().suppress_embeds(), None);
     }
 
     #[test]

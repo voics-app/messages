@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::history_reader::HistoryReader;
 use crate::ports::{
-    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator,
+    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator, LinkUnfurler,
     MessageRepository, PinRepository, ReactionRepository, ReadStateRepository, UserDirectory,
 };
 
@@ -26,6 +26,7 @@ mod refresh_attachment_urls;
 mod remove_all_reactions;
 mod remove_own_reaction;
 mod support;
+mod unfurl_links;
 mod unpin_message;
 
 pub use acknowledge_message::AcknowledgeMessage;
@@ -44,6 +45,7 @@ pub use pin_message::PinMessage;
 pub use refresh_attachment_urls::RefreshAttachmentUrls;
 pub use remove_all_reactions::RemoveAllReactions;
 pub use remove_own_reaction::RemoveOwnReaction;
+pub use unfurl_links::UnfurlLinks;
 pub use unpin_message::UnpinMessage;
 
 /// Every port the use cases depend on, wired once by the composition root.
@@ -61,4 +63,5 @@ pub struct MessagingPorts {
     pub clock: Arc<dyn Clock>,
     pub history: Arc<HistoryReader>,
     pub users: Arc<dyn UserDirectory>,
+    pub unfurler: Arc<dyn LinkUnfurler>,
 }
