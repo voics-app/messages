@@ -476,6 +476,42 @@ impl UserDirectory for FakeUsers {
     }
 }
 
+/// A link unfurler answering from a map and counting fetches.
+#[derive(Default)]
+pub struct FakeUnfurler {
+    embeds: Mutex<HashMap<String, String>>,
+    calls: AtomicUsize,
+    edit: Mutex<Option<(Arc<InMemoryMessages>, Message)>>,
+}
+
+impl FakeUnfurler {
+    pub fn set(&self, url: &str, embed: &str) {
+        self.embeds.lock().unwrap().insert(url.to_owned(), embed.to_owned());
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// Rewrites the message's content while the next fetch is in flight.
+    pub fn edit_during_fetch(&self, messages: Arc<InMemoryMessages>, message: Message) {
+        *self.edit.lock().unwrap() = Some((messages, message));
+    }
+}
+
+#[async_trait]
+impl LinkUnfurler for FakeUnfurler {
+    async fn unfurl(&self, url: &str) -> Option<String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let pending = self.edit.lock().unwrap().take();
+        if let Some((messages, mut message)) = pending {
+            message.content = "edited meanwhile".into();
+            messages.update(&message).await.unwrap();
+        }
+        self.embeds.lock().unwrap().get(url).cloned()
+    }
+}
+
 /// All fakes, wired into a [`MessagingPorts`].
 pub struct Harness {
     pub access: Arc<FakeAccess>,
@@ -487,6 +523,7 @@ pub struct Harness {
     pub events: Arc<RecordingEvents>,
     pub clock: Arc<FakeClock>,
     pub users: Arc<FakeUsers>,
+    pub unfurler: Arc<FakeUnfurler>,
     pub ports: MessagingPorts,
 }
 
@@ -531,6 +568,7 @@ impl Harness {
         let users = Arc::new(FakeUsers::default());
         users.add(ALICE, "alice");
         users.add(BOB, "bob");
+        let unfurler = Arc::new(FakeUnfurler::default());
         let ports = MessagingPorts {
             access: access.clone(),
             messages: messages.clone(),
@@ -544,6 +582,7 @@ impl Harness {
             clock: clock.clone(),
             history: Arc::new(HistoryReader::new(messages.clone(), reactions.clone())),
             users: users.clone(),
+            unfurler: unfurler.clone(),
         };
         Self {
             access,
@@ -555,6 +594,7 @@ impl Harness {
             events,
             clock,
             users,
+            unfurler,
             ports,
         }
     }

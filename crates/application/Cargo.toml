@@ -11,6 +11,7 @@ publish.workspace = true
 discordy-messages-domain.workspace = true
 async-trait.workspace = true
 bytes = "1"
+serde_json.workspace = true
 dashmap.workspace = true
 futures.workspace = true
 thiserror.workspace = true

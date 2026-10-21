@@ -106,6 +106,7 @@ impl MessageRepository for ScyllaMessageRepository {
             (
                 &message.content,
                 format!("[{}]", message.embeds.join(",")),
+                message.flags as i32,
                 message.mentions.users.iter().copied().map(id).collect::<Vec<_>>(),
                 message.mentions.roles.iter().copied().map(id).collect::<Vec<_>>(),
                 message.mentions.everyone,

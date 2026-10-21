@@ -23,12 +23,17 @@ tracing.workspace = true
 scylla = "1"
 rskafka = { version = "0.6", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots"] }
+imagesize = "0.13"
 rusty-s3 = "0.10"
 url = "2"
 moka = { version = "0.12", features = ["future"] }
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
 subtle = "2"
+
+[features]
+# Lets tests point the link unfurler at a loopback fixture server. Never enabled in the service binary.
+test-support = []
 
 [dev-dependencies]
 testcontainers = "0.28"

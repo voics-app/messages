@@ -11,6 +11,13 @@ pub const MAX_ATTACHMENTS_PER_MESSAGE: usize = 10;
 /// Maximum files per presign request.
 pub const MAX_UPLOADS_PER_REQUEST: usize = 10;
 
+/// Longest alt text (Discord parity).
+pub const MAX_DESCRIPTION_CHARS: usize = 1024;
+/// Discord's IS_SPOILER attachment flag: blurred until the viewer reveals it.
+pub const ATTACHMENT_FLAG_SPOILER: u32 = 1 << 3;
+/// Filename prefix that marks a spoiler (Discord's convention).
+pub const SPOILER_PREFIX: &str = "SPOILER_";
+
 const MAX_FILENAME_CHARS: usize = 255;
 const KEY_PREFIX: &str = "attachments";
 
@@ -23,9 +30,17 @@ pub struct Attachment {
     pub size: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Alt text.
+    pub description: Option<String>,
+    /// `ATTACHMENT_FLAG_*` bits.
+    pub flags: u32,
 }
 
 impl Attachment {
+    pub fn is_spoiler(&self) -> bool {
+        self.flags & ATTACHMENT_FLAG_SPOILER != 0
+    }
+
     pub fn key(&self, channel_id: ChannelId) -> UploadKey {
         UploadKey::new(channel_id, self.id, self.filename.clone())
     }
@@ -114,6 +129,24 @@ fn filename_segment(raw: &str) -> &str {
     raw.rsplit('/').next().unwrap_or_default()
 }
 
+/// The flags stored for an upload: only the spoiler bit is client-settable,
+/// and a `SPOILER_` filename prefix implies it.
+pub fn upload_flags(filename: &AttachmentFilename, requested: u32) -> u32 {
+    let spoiler = requested & ATTACHMENT_FLAG_SPOILER != 0 || filename.as_str().starts_with(SPOILER_PREFIX);
+    if spoiler { ATTACHMENT_FLAG_SPOILER } else { 0 }
+}
+
+/// Trims alt text; empty text means none.
+pub fn validate_description(raw: Option<&str>) -> Result<Option<String>, DomainError> {
+    let Some(text) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if text.chars().count() > MAX_DESCRIPTION_CHARS {
+        return Err(DomainError::invalid("description", "must be 1024 or fewer characters"));
+    }
+    Ok(Some(text.to_owned()))
+}
+
 /// Validates a requested upload size.
 pub fn validate_upload_size(size: u64) -> Result<(), DomainError> {
     if size == 0 || size > MAX_ATTACHMENT_BYTES {
@@ -166,6 +199,25 @@ mod tests {
         assert!(UploadKey::parse_for_channel("attachments/42/x/a.png", CHANNEL).is_err());
         assert!(UploadKey::parse_for_channel("attachments/42/7/a b.png", CHANNEL).is_err());
         assert!(UploadKey::parse_for_channel("attachments/42/7/x/a.png", CHANNEL).is_err());
+    }
+
+    #[test]
+    fn spoiler_comes_from_the_flag_or_the_filename_prefix() {
+        let plain = AttachmentFilename::parse("a.png").unwrap();
+        let prefixed = AttachmentFilename::parse("SPOILER_a.png").unwrap();
+        assert_eq!(upload_flags(&plain, 0), 0);
+        assert_eq!(upload_flags(&plain, ATTACHMENT_FLAG_SPOILER), ATTACHMENT_FLAG_SPOILER);
+        assert_eq!(upload_flags(&prefixed, 0), ATTACHMENT_FLAG_SPOILER);
+        assert_eq!(upload_flags(&plain, 0xFFFF_FFF7), 0, "unknown bits are dropped");
+    }
+
+    #[test]
+    fn descriptions_are_trimmed_and_bounded() {
+        assert_eq!(validate_description(None).unwrap(), None);
+        assert_eq!(validate_description(Some("  ")).unwrap(), None);
+        assert_eq!(validate_description(Some(" a cat ")).unwrap().as_deref(), Some("a cat"));
+        assert!(validate_description(Some(&"é".repeat(1024))).is_ok());
+        assert!(validate_description(Some(&"é".repeat(1025))).is_err());
     }
 
     #[test]

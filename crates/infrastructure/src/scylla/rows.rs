@@ -28,6 +28,8 @@ pub(crate) struct AttachmentUdt {
     size: i64,
     width: Option<i32>,
     height: Option<i32>,
+    description: Option<String>,
+    flags: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, DeserializeRow, SerializeRow)]
@@ -161,6 +163,8 @@ fn attachment_udt(attachment: &Attachment) -> AttachmentUdt {
         size: attachment.size as i64,
         width: attachment.width.map(|w| w as i32),
         height: attachment.height.map(|h| h as i32),
+        description: attachment.description.clone(),
+        flags: Some(attachment.flags as i32),
     }
 }
 
@@ -172,6 +176,8 @@ fn attachment_from_udt(udt: AttachmentUdt) -> Option<Attachment> {
         size: udt.size.max(0) as u64,
         width: udt.width.map(|w| w as u32),
         height: udt.height.map(|h| h as u32),
+        description: udt.description,
+        flags: udt.flags.unwrap_or(0).max(0) as u32,
     })
 }
 
@@ -208,6 +214,8 @@ mod tests {
                 size: 10,
                 width: Some(4),
                 height: None,
+                description: Some("alt".into()),
+                flags: 8,
             }],
             embeds: vec![r#"{"title":"t"}"#.into()],
             components: vec![],
