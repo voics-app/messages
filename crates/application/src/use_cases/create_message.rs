@@ -4,7 +4,7 @@ use std::sync::Arc;
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::{
     Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, InteractionLink, Message,
-    MessageDraft, MessageId, ReadState, UploadKey, UserId, WebhookAuthor,
+    MessageDraft, MessageId, MessageKind, ReadState, UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
@@ -40,6 +40,10 @@ pub struct CreateMessageCommand {
     pub interaction: Option<InteractionLink>,
     /// Recipients of an ephemeral message. Only these users receive it.
     pub target_user_ids: Vec<UserId>,
+    /// Group DM system message kind (internal posts only).
+    pub system_kind: Option<MessageKind>,
+    /// The user a recipient add/remove system message is about.
+    pub system_target: Option<UserId>,
 }
 
 pub struct CreateMessage {
@@ -146,6 +150,8 @@ impl CreateMessage {
             flags: command.flags,
             webhook: command.webhook.clone(),
             interaction: command.interaction,
+            system_kind: command.system_kind,
+            system_target: command.system_target,
         };
         Ok(Message::compose(
             self.ids.next_id(),

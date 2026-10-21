@@ -15,6 +15,14 @@ pub const MAX_EMBEDS: usize = 10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageKind {
     Default,
+    /// Group DM: a member was added (the target is in `mentions.users`).
+    RecipientAdd,
+    /// Group DM: a member was removed or left.
+    RecipientRemove,
+    /// Group DM: renamed (content is the new name).
+    ChannelNameChange,
+    /// Group DM: icon changed.
+    ChannelIconChange,
     Reply,
 }
 
@@ -22,15 +30,31 @@ impl MessageKind {
     pub const fn code(self) -> u8 {
         match self {
             Self::Default => 0,
+            Self::RecipientAdd => 1,
+            Self::RecipientRemove => 2,
+            Self::ChannelNameChange => 4,
+            Self::ChannelIconChange => 5,
             Self::Reply => 19,
         }
     }
 
     pub const fn from_code(code: u8) -> Self {
         match code {
+            1 => Self::RecipientAdd,
+            2 => Self::RecipientRemove,
+            4 => Self::ChannelNameChange,
+            5 => Self::ChannelIconChange,
             19 => Self::Reply,
             _ => Self::Default,
         }
+    }
+
+    /// Server-generated messages that carry no user text.
+    pub const fn is_system(self) -> bool {
+        matches!(
+            self,
+            Self::RecipientAdd | Self::RecipientRemove | Self::ChannelNameChange | Self::ChannelIconChange
+        )
     }
 }
 
@@ -46,6 +70,10 @@ pub struct MessageDraft {
     pub flags: u32,
     pub webhook: Option<WebhookAuthor>,
     pub interaction: Option<InteractionLink>,
+    /// Set by internal posts of group DM system messages.
+    pub system_kind: Option<MessageKind>,
+    /// The user a recipient add/remove message is about.
+    pub system_target: Option<UserId>,
 }
 
 /// A partial update; `None` leaves the field unchanged.
@@ -82,16 +110,25 @@ impl Message {
         draft: MessageDraft,
         may_mention_everyone: bool,
     ) -> Result<Self, DomainError> {
+        let kind = match draft.system_kind {
+            Some(kind) if kind.is_system() => kind,
+            _ if draft.reply_to.is_some() => MessageKind::Reply,
+            _ => MessageKind::Default,
+        };
+        let mut mentions = if kind.is_system() {
+            Mentions::default()
+        } else {
+            Mentions::parse(&draft.content, may_mention_everyone)
+        };
+        if let (true, Some(target)) = (kind.is_system(), draft.system_target) {
+            mentions.users.insert(target);
+        }
         let message = Self {
             id,
             channel_id,
             author_id,
-            kind: if draft.reply_to.is_some() {
-                MessageKind::Reply
-            } else {
-                MessageKind::Default
-            },
-            mentions: Mentions::parse(&draft.content, may_mention_everyone),
+            kind,
+            mentions,
             content: draft.content,
             attachments: draft.attachments,
             embeds: draft.embeds,
@@ -154,7 +191,10 @@ impl Message {
         if self.embeds.len() > MAX_EMBEDS {
             reject("embeds", "must be 10 or fewer");
         }
-        let is_empty = self.content.trim().is_empty() && self.attachments.is_empty() && self.embeds.is_empty();
+        let is_empty = !self.kind.is_system()
+            && self.content.trim().is_empty()
+            && self.attachments.is_empty()
+            && self.embeds.is_empty();
         if is_empty {
             reject("content", "cannot send an empty message");
         }
@@ -194,6 +234,19 @@ mod tests {
             width: None,
             height: None,
         }
+    }
+
+    #[test]
+    fn composes_a_system_message_without_content() {
+        let message = compose(MessageDraft {
+            system_kind: Some(MessageKind::RecipientAdd),
+            system_target: Some(Snowflake::new(9)),
+            ..MessageDraft::default()
+        })
+        .unwrap();
+        assert_eq!(message.kind.code(), 1);
+        assert!(message.mentions.users.contains(&Snowflake::new(9)));
+        assert!(compose(MessageDraft::default()).is_err());
     }
 
     #[test]

@@ -348,6 +348,13 @@ pub struct InternalCreateMessageRequest {
     /// Recipients of an ephemeral message (the invoking user).
     #[serde(default)]
     pub target_user_ids: Option<Vec<String>>,
+    /// Group DM system message type: 1 RECIPIENT_ADD, 2 RECIPIENT_REMOVE,
+    /// 4 CHANNEL_NAME_CHANGE, 5 CHANNEL_ICON_CHANGE.
+    #[serde(default, rename = "type")]
+    pub message_type: Option<u8>,
+    /// The user a type 1/2 system message is about.
+    #[serde(default)]
+    pub target_user_id: Option<String>,
 }
 
 /// api: `POST /internal/v1/auth/introspect`.
