@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use config::{Config, Environment};
+use discordy_messages_application::ports::{BackfillState, SearchIndex};
 use discordy_messages_application::use_cases::MessagingPorts;
 use discordy_messages_application::{HistoryReader, PortError};
 use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
@@ -17,6 +18,7 @@ use discordy_messages_infrastructure::scylla::{
     self, ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
     ScyllaReadStateRepository,
 };
+use discordy_messages_infrastructure::search::{self, DisabledSearchIndex, PgSearchIndex};
 use discordy_messages_infrastructure::storage::{S3AttachmentStorage, S3Settings};
 use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
 use discordy_messages_interface::cors::{self, InvalidOrigin};
@@ -97,6 +99,17 @@ async fn run(config: Config) -> Result<(), StartupError> {
         clock.clone(),
     );
     let users = Arc::new(HttpUserDirectory::new(api.clone()));
+    let (search_index, pg_index): (Arc<dyn SearchIndex>, Option<Arc<PgSearchIndex>>) = match &config.search_database_url
+    {
+        Some(url) => {
+            let pg = Arc::new(PgSearchIndex::new(search::connect(url)?));
+            (pg.clone(), Some(pg))
+        }
+        None => {
+            tracing::warn!("SEARCH_DATABASE_URL is not set: message search is disabled");
+            (Arc::new(DisabledSearchIndex), None)
+        }
+    };
     let ports = MessagingPorts {
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
@@ -115,6 +128,7 @@ async fn run(config: Config) -> Result<(), StartupError> {
         clock,
         history: Arc::new(HistoryReader::new(messages, reactions)),
         users,
+        search: search_index.clone(),
     };
     let probes: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(ScyllaProbe(session)), Arc::new(KafkaProbe(kafka))];
     let state = AppState::new(
@@ -125,6 +139,16 @@ async fn run(config: Config) -> Result<(), StartupError> {
         probes,
     );
 
+    if let Some(pg) = pg_index {
+        tokio::spawn(run_search(
+            pg,
+            search_index,
+            state.clone(),
+            config.kafka_brokers.clone(),
+            config.search_backfill_on_start,
+        ));
+    }
+
     let cors = cors::layer(&config.cors_allowed_origins)?;
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, worker = config.worker.value(), "messages service listening");
@@ -133,6 +157,40 @@ async fn run(config: Config) -> Result<(), StartupError> {
         .await?;
     tracing::info!("messages service stopped gracefully");
     Ok(())
+}
+
+/// Brings the search index up in the background so a slow or absent
+/// PostgreSQL never delays or breaks messaging: migrate, start the Redpanda
+/// consumer, then rebuild from history when the index is not complete yet.
+async fn run_search(
+    pg: Arc<PgSearchIndex>,
+    index: Arc<dyn SearchIndex>,
+    state: AppState,
+    brokers: Vec<String>,
+    backfill_on_start: bool,
+) {
+    const RETRY: Duration = Duration::from_secs(5);
+    while let Err(error) = pg.migrate().await {
+        tracing::warn!(%error, "search database not ready, retrying");
+        tokio::time::sleep(RETRY).await;
+    }
+    while let Err(error) = search::consumer::spawn(brokers.clone(), index.clone()).await {
+        tracing::warn!(%error, "search consumer could not start, retrying");
+        tokio::time::sleep(RETRY).await;
+    }
+    tracing::info!("search index ready");
+    if !backfill_on_start {
+        return;
+    }
+    match index.backfill_state().await {
+        Ok(BackfillState::Complete) => {}
+        Ok(_) => {
+            if let Err(error) = state.use_cases.reindex.execute().await {
+                tracing::error!(%error, "initial search reindex failed; POST /internal/v1/search/reindex to retry");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "could not read the search backfill state"),
+    }
 }
 
 async fn shutdown_signal() {

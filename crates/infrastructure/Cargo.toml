@@ -29,6 +29,7 @@ url = "2"
 moka = { version = "0.12", features = ["future"] }
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
 subtle = "2"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]
 testcontainers = "0.28"

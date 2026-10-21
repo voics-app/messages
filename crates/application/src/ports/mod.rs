@@ -12,6 +12,7 @@ mod messages;
 mod pins;
 mod reactions;
 mod read_states;
+mod search;
 mod users;
 
 pub use activity::ActivityRepository;
@@ -25,4 +26,5 @@ pub use messages::{BucketQuery, MessageRepository};
 pub use pins::{Pin, PinRepository};
 pub use reactions::ReactionRepository;
 pub use read_states::ReadStateRepository;
+pub use search::{BackfillState, Checkpoint, IndexOp, PinnedFilter, SearchHit, SearchIndex, SearchPage, SearchRequest};
 pub use users::{UserDirectory, UserProfile};

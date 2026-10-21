@@ -764,3 +764,112 @@ async fn refresh_urls_signs_keys_for_members_and_refuses_foreign_channels() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+fn search_uri(query: &str) -> String {
+    format!("/api/v1/channels/{CHANNEL}/messages/search?{query}")
+}
+
+#[tokio::test]
+async fn search_returns_groups_with_the_hit_flag_and_authors() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    for text in ["before it", "needle in a haystack", "after it"] {
+        harness.clock.advance_ms(5);
+        let message = harness.seed(ALICE, text).await;
+        harness
+            .search
+            .index_message(&message, Some(discordy_messages_application::fakes::GUILD));
+    }
+    let (status, body) = call(
+        &app,
+        Method::GET,
+        &search_uri("content=needle"),
+        Some("Bearer bob"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total_results"], 1);
+    let group = body["messages"][0].as_array().unwrap();
+    assert_eq!(group.len(), 3);
+    assert_eq!(group[1]["content"], "needle in a haystack");
+    assert_eq!(group[1]["hit"], true);
+    assert!(group[0].get("hit").is_none());
+    assert_eq!(group[1]["author"]["username"], "alice");
+    assert!(body.get("index_building").is_none());
+}
+
+#[tokio::test]
+async fn search_validates_parameters_and_credentials() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let (status, _) = call(&app, Method::GET, &search_uri("content=x"), None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, body) = call(&app, Method::GET, &search_uri("limit=99"), Some("Bearer bob"), None).await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::BAD_REQUEST, Some(50035)));
+    let (status, body) = call(&app, Method::GET, &search_uri("has=gif"), Some("Bearer bob"), None).await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::BAD_REQUEST, Some(50035)));
+}
+
+#[tokio::test]
+async fn search_respects_permissions_and_delivery_mode() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    harness.access.set_permissions(Permissions::VIEW_CHANNEL);
+    let (status, body) = call(&app, Method::GET, &search_uri("content=x"), Some("Bearer bob"), None).await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::FORBIDDEN, Some(50001)));
+    harness.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+    let (status, body) = call(&app, Method::GET, &search_uri("content=x"), Some("Bearer bob"), None).await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::CONFLICT, Some(50160)));
+}
+
+#[tokio::test]
+async fn guild_search_is_scoped_to_readable_channels_and_rate_limited() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    harness.clock.advance_ms(5);
+    let message = harness.seed(ALICE, "guild wide hello").await;
+    harness
+        .search
+        .index_message(&message, Some(discordy_messages_application::fakes::GUILD));
+    let uri = format!(
+        "/api/v1/guilds/{}/messages/search?content=hello",
+        discordy_messages_application::fakes::GUILD
+    );
+    let (status, body) = call(&app, Method::GET, &uri, Some("Bearer bob"), None).await;
+    assert_eq!((status, body["total_results"].as_u64()), (StatusCode::OK, Some(1)));
+    for _ in 1..10 {
+        call(&app, Method::GET, &uri, Some("Bearer bob"), None).await;
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header("authorization", "Bearer bob")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key("retry-after"));
+}
+
+#[tokio::test]
+async fn reindex_is_internal_only_and_fills_the_index() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    harness.seed(ALICE, "old history").await;
+    let (status, _) = post_internal(&app, "/internal/v1/search/reindex", None, json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, body) = post_internal(&app, "/internal/v1/search/reindex", Some(INTERNAL), json!({})).await;
+    assert_eq!((status, body["started"].as_bool()), (StatusCode::ACCEPTED, Some(true)));
+    for _ in 0..50 {
+        if harness.search.len() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(harness.search.len(), 1);
+}

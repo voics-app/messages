@@ -23,6 +23,7 @@ pub struct ScyllaMessageRepository {
     scan_older_unbounded: PreparedStatement,
     scan_newer: PreparedStatement,
     last: PreparedStatement,
+    all_channels: PreparedStatement,
 }
 
 impl ScyllaMessageRepository {
@@ -72,6 +73,7 @@ impl ScyllaMessageRepository {
                 "SELECT last_message_id FROM channel_last_message WHERE channel_id = ?",
             )
             .await?,
+            all_channels: prepare(s, "SELECT channel_id, last_message_id FROM channel_last_message").await?,
             session,
         })
     }
@@ -157,5 +159,13 @@ impl MessageRepository for ScyllaMessageRepository {
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {
         let rows: Vec<(Option<i64>,)> = fetch_all(&self.session, &self.last, (id(channel_id),)).await?;
         Ok(rows.into_iter().find_map(|(last,)| last).map(snowflake))
+    }
+
+    async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError> {
+        let rows: Vec<(i64, Option<i64>)> = fetch_all(&self.session, &self.all_channels, ()).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(channel, last)| last.map(|last| (snowflake(channel), snowflake(last))))
+            .collect())
     }
 }

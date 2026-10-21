@@ -36,6 +36,10 @@ pub struct Config {
     pub attachment_url_ttl: Duration,
     /// Origins allowed by CORS; `null` is the origin of the packaged `file://` client.
     pub cors_allowed_origins: Vec<String>,
+    /// PostgreSQL database of the message search index; search is disabled without it.
+    pub search_database_url: Option<String>,
+    /// Rebuild the index from stored history on startup when it is not complete yet.
+    pub search_backfill_on_start: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +87,8 @@ impl Config {
             attachment_signing_key: reader.signing_key("ATTACHMENT_SIGNING_KEY"),
             attachment_url_ttl: reader.seconds("ATTACHMENT_URL_TTL_SECONDS", DEFAULT_URL_TTL),
             cors_allowed_origins: reader.origins("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS),
+            search_database_url: reader.value("SEARCH_DATABASE_URL"),
+            search_backfill_on_start: reader.flag("SEARCH_BACKFILL_ON_START", true),
         };
         if reader.problems.is_empty() {
             Ok(config)
@@ -131,6 +137,18 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             self.problem(format!("{name} must list at least one host:port"));
         }
         items
+    }
+
+    fn flag(&mut self, name: &str, default: bool) -> bool {
+        match self.value(name).as_deref() {
+            None => default,
+            Some("true" | "1") => true,
+            Some("false" | "0") => false,
+            Some(other) => {
+                self.problem(format!("{name} must be true or false, got `{other}`"));
+                default
+            }
+        }
     }
 
     fn origins(&self, name: &str, default: &str) -> Vec<String> {
@@ -301,6 +319,30 @@ mod tests {
         assert_eq!(
             config.cors_allowed_origins,
             vec!["https://app.discordy.example", "null"]
+        );
+    }
+
+    #[test]
+    fn search_is_optional_and_backfills_on_start_by_default() {
+        let mut vars = complete();
+        let config = load(&vars).unwrap();
+        assert_eq!(config.search_database_url, None);
+        assert!(config.search_backfill_on_start);
+        vars.insert("SEARCH_DATABASE_URL", "postgres://u:p@db/discordy_search");
+        vars.insert("SEARCH_BACKFILL_ON_START", "false");
+        let config = load(&vars).unwrap();
+        assert_eq!(
+            config.search_database_url.as_deref(),
+            Some("postgres://u:p@db/discordy_search")
+        );
+        assert!(!config.search_backfill_on_start);
+        vars.insert("SEARCH_BACKFILL_ON_START", "maybe");
+        assert!(
+            load(&vars)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("SEARCH_BACKFILL_ON_START")
         );
     }
 

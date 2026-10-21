@@ -37,6 +37,17 @@ impl GetMessageHistory {
             .access(channel_id, viewer)
             .await?
             .ensure_can_read_history()?;
+        let page = self.page(channel_id, cursor, limit).await?;
+        self.decorate(channel_id, page, viewer).await
+    }
+
+    /// The raw page, newest first, without any permission check or reactions.
+    pub(crate) async fn page(
+        &self,
+        channel_id: ChannelId,
+        cursor: HistoryCursor,
+        limit: PageLimit,
+    ) -> AppResult<Vec<Message>> {
         let newest = self.history.last_message_id(channel_id).await?;
         let mut page = Vec::new();
         for scan in plan(cursor, limit, channel_id, newest) {
@@ -44,7 +55,7 @@ impl GetMessageHistory {
         }
         page.sort_by_key(|m| std::cmp::Reverse(m.id));
         page.dedup_by_key(|m| m.id);
-        self.decorate(channel_id, page, viewer).await
+        Ok(page)
     }
 
     async fn run_scan(&self, channel_id: ChannelId, scan: Scan) -> AppResult<Vec<Message>> {

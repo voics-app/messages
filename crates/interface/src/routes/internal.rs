@@ -2,11 +2,13 @@
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
 use contracts::{
     AdminStatsResponse, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto,
 };
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
 use discordy_messages_domain::{InteractionLink, WebhookAuthor};
+use serde_json::{Value, json};
 
 use crate::dto::{read_state_dto, single};
 use crate::error::ApiError;
@@ -117,4 +119,19 @@ pub async fn admin_stats(
             p2p_signaled: stats.p2p_signaled,
         },
     }))
+}
+
+/// Starts a rebuild of the search index from stored history in the background
+/// (`202`), or answers `409`-free `{"started": false}` when one is running.
+pub async fn reindex_search(State(state): State<AppState>, _: InternalCaller) -> (StatusCode, Json<Value>) {
+    let task_state = state.clone();
+    let started = !task_state.use_cases.reindex.is_running();
+    if started {
+        tokio::spawn(async move {
+            if let Err(error) = task_state.use_cases.reindex.execute().await {
+                tracing::error!(%error, "search reindex failed");
+            }
+        });
+    }
+    (StatusCode::ACCEPTED, Json(json!({ "started": started })))
 }
