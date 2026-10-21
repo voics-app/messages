@@ -12,6 +12,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::attachment_urls::AttachmentUrls;
 use crate::authors::{Authors, author_dto, resolve_views};
+use crate::embed_proxy::with_proxied_media;
 use crate::state::AppState;
 
 /// RFC 3339 with millisecond precision, as Discord renders timestamps.
@@ -55,12 +56,22 @@ fn attachment_dto(channel_id: ChannelId, attachment: &Attachment, urls: &Attachm
         content_type: attachment.content_type.clone(),
         width: attachment.width,
         height: attachment.height,
+        description: attachment.description.clone(),
+        flags: (attachment.flags != 0).then_some(attachment.flags),
     }
 }
 
 /// Embeds and components are stored as JSON text; corrupt entries are dropped.
 fn json_values(raw: &[String]) -> Vec<Value> {
     raw.iter().filter_map(|text| serde_json::from_str(text).ok()).collect()
+}
+
+/// Embeds as sent on the wire: remote media goes through the media proxy.
+fn embed_values(raw: &[String], urls: &AttachmentUrls) -> Vec<Value> {
+    json_values(raw)
+        .into_iter()
+        .map(|embed| with_proxied_media(embed, urls))
+        .collect()
 }
 
 pub fn message_dto(
@@ -93,7 +104,7 @@ pub fn message_dto(
             .iter()
             .map(|a| attachment_dto(message.channel_id, a, urls))
             .collect(),
-        embeds: json_values(&message.embeds),
+        embeds: embed_values(&message.embeds, urls),
         reactions: reactions.iter().map(reaction_dto).collect(),
         nonce,
         pinned: message.pinned,

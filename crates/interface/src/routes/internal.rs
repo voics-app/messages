@@ -7,7 +7,7 @@ use contracts::{
     AdminStatsResponse, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto,
 };
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
-use discordy_messages_domain::{InteractionLink, WebhookAuthor};
+use discordy_messages_domain::{InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
 
 use crate::dto::{read_state_dto, single};
@@ -63,6 +63,21 @@ fn internal_command(
         .iter()
         .map(|raw| parse_id("target_user_ids", raw))
         .collect::<Result<Vec<_>, _>>()?;
+    let system_kind = match body.message_type {
+        None | Some(0) => None,
+        Some(code) => {
+            let kind = MessageKind::from_code(code);
+            if !kind.is_system() {
+                return Err(ApiError::invalid("type", "unsupported system message type"));
+            }
+            Some(kind)
+        }
+    };
+    let system_target = body
+        .target_user_id
+        .as_deref()
+        .map(|raw| parse_id("target_user_id", raw))
+        .transpose()?;
     Ok(CreateMessageCommand {
         channel_id,
         author_id,
@@ -73,6 +88,8 @@ fn internal_command(
             .into_iter()
             .map(|a| AttachmentReference {
                 uploaded_filename: a.uploaded_filename,
+                description: a.description,
+                flags: a.flags.unwrap_or(0),
             })
             .collect(),
         embeds: json_texts(body.embeds),
@@ -82,6 +99,8 @@ fn internal_command(
         webhook,
         interaction,
         target_user_ids,
+        system_kind,
+        system_target,
         ..CreateMessageCommand::default()
     })
 }

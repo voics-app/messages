@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::history_reader::HistoryReader;
 use crate::ports::{
-    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator,
+    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator, LinkUnfurler,
     MessageRepository, PinRepository, ReactionRepository, ReadStateRepository, SearchIndex, UserDirectory,
 };
 
@@ -28,6 +28,7 @@ mod remove_all_reactions;
 mod remove_own_reaction;
 mod search_messages;
 mod support;
+mod unfurl_links;
 mod unpin_message;
 
 pub use acknowledge_message::AcknowledgeMessage;
@@ -48,6 +49,7 @@ pub use reindex_search::{ReindexReport, ReindexSearch};
 pub use remove_all_reactions::RemoveAllReactions;
 pub use remove_own_reaction::RemoveOwnReaction;
 pub use search_messages::{SearchMessages, SearchOutcome, SearchResultMessage, SearchScope};
+pub use unfurl_links::UnfurlLinks;
 pub use unpin_message::UnpinMessage;
 
 /// Every port the use cases depend on, wired once by the composition root.
@@ -66,4 +68,5 @@ pub struct MessagingPorts {
     pub history: Arc<HistoryReader>,
     pub users: Arc<dyn UserDirectory>,
     pub search: Arc<dyn SearchIndex>,
+    pub unfurler: Arc<dyn LinkUnfurler>,
 }

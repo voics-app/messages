@@ -1,12 +1,19 @@
 name: ci
 on:
   push:
-    branches: [main, develop, "release/**", "hotfix/**", "feature/**"]
+    branches: [main, develop, "release/**", "hotfix/**"]
     tags: ["v*"]
+  schedule:
+    - cron: "17 4 * * 1" # weekly full run: cargo audit picks up new advisories
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gitflow:

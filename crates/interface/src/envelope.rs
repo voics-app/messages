@@ -145,11 +145,15 @@ impl EnvelopePublisher {
                     last_pin_timestamp: last_pin_timestamp_ms.map(rfc3339),
                 })?,
             ),
-            MessageEventKind::Acknowledged { message_id } => (
+            MessageEventKind::Acknowledged {
+                message_id,
+                mention_count,
+            } => (
                 event_type::MESSAGE_ACK,
                 encode(&MessageAckData {
                     channel_id: channel_id.clone(),
                     message_id: message_id.to_string(),
+                    mention_count: *mention_count,
                 })?,
             ),
         };

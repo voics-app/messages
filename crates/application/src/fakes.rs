@@ -624,6 +624,78 @@ impl SearchIndex for FakeSearchIndex {
     }
 }
 
+/// A link unfurler answering from a map and counting fetches.
+#[derive(Default)]
+pub struct FakeUnfurler {
+    embeds: Mutex<HashMap<String, String>>,
+    calls: AtomicUsize,
+    edit: Mutex<Option<(Arc<InMemoryMessages>, Message)>>,
+}
+
+impl FakeUnfurler {
+    pub fn set(&self, url: &str, embed: &str) {
+        self.embeds.lock().unwrap().insert(url.to_owned(), embed.to_owned());
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// Rewrites the message's content while the next fetch is in flight.
+    pub fn edit_during_fetch(&self, messages: Arc<InMemoryMessages>, message: Message) {
+        *self.edit.lock().unwrap() = Some((messages, message));
+    }
+}
+
+#[async_trait]
+impl LinkUnfurler for FakeUnfurler {
+    async fn unfurl(&self, url: &str) -> Option<String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let pending = self.edit.lock().unwrap().take();
+        if let Some((messages, mut message)) = pending {
+            message.content = "edited meanwhile".into();
+            messages.update(&message).await.unwrap();
+        }
+        self.embeds.lock().unwrap().get(url).cloned()
+    }
+}
+
+/// A media proxy upstream answering from a map of remote URL to bytes.
+#[derive(Default)]
+pub struct FakeMedia {
+    files: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    pub opened: Mutex<Vec<String>>,
+}
+
+impl FakeMedia {
+    pub fn put(&self, url: &str, content_type: &str, body: &[u8]) {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(url.to_owned(), (content_type.to_owned(), body.to_vec()));
+    }
+}
+
+#[async_trait]
+impl RemoteMediaFetcher for FakeMedia {
+    async fn open(&self, url: &str, _range: Option<&str>) -> Result<RemoteMedia, MediaError> {
+        self.opened.lock().unwrap().push(url.to_owned());
+        if url.contains("169.254.") {
+            return Err(MediaError::Forbidden);
+        }
+        let Some((content_type, body)) = self.files.lock().unwrap().get(url).cloned() else {
+            return Err(MediaError::Unavailable("not found".into()));
+        };
+        Ok(RemoteMedia {
+            status: 200,
+            content_type,
+            content_length: Some(body.len() as u64),
+            content_range: None,
+            body: futures::stream::once(async move { Ok(bytes::Bytes::from(body)) }).boxed(),
+        })
+    }
+}
+
 /// All fakes, wired into a [`MessagingPorts`].
 pub struct Harness {
     pub access: Arc<FakeAccess>,
@@ -636,6 +708,8 @@ pub struct Harness {
     pub clock: Arc<FakeClock>,
     pub users: Arc<FakeUsers>,
     pub search: Arc<FakeSearchIndex>,
+    pub unfurler: Arc<FakeUnfurler>,
+    pub media: Arc<FakeMedia>,
     pub ports: MessagingPorts,
 }
 
@@ -682,6 +756,7 @@ impl Harness {
         users.add(ALICE, "alice");
         users.add(BOB, "bob");
         let search = Arc::new(FakeSearchIndex::default());
+        let unfurler = Arc::new(FakeUnfurler::default());
         let ports = MessagingPorts {
             access: access.clone(),
             messages: messages.clone(),
@@ -696,6 +771,7 @@ impl Harness {
             history: Arc::new(HistoryReader::new(messages.clone(), reactions.clone())),
             users: users.clone(),
             search: search.clone(),
+            unfurler: unfurler.clone(),
         };
         Self {
             access,
@@ -708,6 +784,8 @@ impl Harness {
             clock,
             users,
             search,
+            unfurler,
+            media: Arc::new(FakeMedia::default()),
             ports,
         }
     }

@@ -38,6 +38,10 @@ fn message(channel: Snowflake, id: Snowflake, content: &str) -> Message {
 
 #[tokio::test]
 async fn scylla_adapters_against_a_real_node() {
+    if !support::cpu_supports_scylla() {
+        eprintln!("skipping: ScyllaDB needs SSE4.2 and PCLMULQDQ, which this CPU does not expose");
+        return;
+    }
     let scylla = support::start_scylla("discordy_it").await;
     let session = Arc::clone(&scylla.session);
 
@@ -70,6 +74,8 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
         size: 512,
         width: None,
         height: None,
+        description: Some("a cat".into()),
+        flags: 8,
     });
     original.embeds.push(r#"{"title":"t"}"#.into());
     repo.insert(&original).await.unwrap();
@@ -80,7 +86,10 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     edited.edited_at_ms = Some(DISCORDY_EPOCH_MS + 5);
     repo.update(&edited).await.unwrap();
     repo.set_pinned(channel, original.id, true).await.unwrap();
+    edited.flags = 4;
+    repo.update(&edited).await.unwrap();
     let stored = repo.find(channel, original.id).await.unwrap().unwrap();
+    assert_eq!(stored.flags, 4, "SUPPRESS_EMBEDS persists through update");
     assert_eq!(stored.content, "edited");
     assert!(stored.pinned);
     assert_eq!(stored.attachments, original.attachments);

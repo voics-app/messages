@@ -133,6 +133,11 @@ impl ChannelAccess {
         }
     }
 
+    /// The author or a moderator may hide a message's link previews.
+    pub fn ensure_can_suppress_embeds(&self, actor: UserId, author: UserId) -> Result<(), DomainError> {
+        self.ensure_can_delete(actor, author)
+    }
+
     /// Anyone in a DM may pin; guild channels need MANAGE_MESSAGES or
     /// PIN_MESSAGES.
     pub fn ensure_can_pin(&self) -> Result<(), DomainError> {

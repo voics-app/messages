@@ -6,7 +6,7 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 
-use crate::routes::{attachments, download, health, internal, messages, pins, reactions, search};
+use crate::routes::{attachments, download, external, health, internal, messages, pins, reactions, search};
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -62,6 +62,7 @@ pub fn router(state: AppState) -> Router {
             "/attachments/{channel_id}/{attachment_id}/{filename}",
             get(download::download),
         )
+        .route("/external/{token}", get(external::proxy))
         .route("/healthz", get(health::live))
         .route("/readyz", get(health::ready))
         .route("/metrics", get(health::metrics))

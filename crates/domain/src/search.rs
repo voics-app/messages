@@ -322,6 +322,8 @@ mod tests {
             content_type: content_type.map(str::to_owned),
             size: 1,
             width: None,
+            description: None,
+            flags: 0,
             height: None,
         }
     }
