@@ -47,6 +47,7 @@ pub enum MessageEventKind {
     },
     Acknowledged {
         message_id: MessageId,
+        mention_count: u32,
     },
 }
 

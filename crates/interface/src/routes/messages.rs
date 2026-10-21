@@ -1,9 +1,10 @@
 //! `/channels/{id}/messages` endpoints.
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
-use contracts::{AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
+use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
 use discordy_messages_domain::{HistoryCursor, MessageEdit, PageLimit};
 use serde::Deserialize;
@@ -162,11 +163,25 @@ pub async fn acknowledge(
     State(state): State<AppState>,
     Caller(caller): Caller,
     ApiPath((Id(channel_id), Id(message_id))): ApiPath<(Id, Id)>,
+    body: Bytes,
 ) -> Result<Json<AckResponse>, ApiError> {
-    state
-        .use_cases
-        .acknowledge
-        .execute(channel_id, message_id, caller.user_id)
-        .await?;
+    let request: AckRequest = if body.is_empty() {
+        AckRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|e| ApiError::invalid("body", &e.to_string()))?
+    };
+    if request.manual {
+        state
+            .use_cases
+            .acknowledge
+            .execute_manual(channel_id, message_id, caller.user_id, request.mention_count)
+            .await?;
+    } else {
+        state
+            .use_cases
+            .acknowledge
+            .execute(channel_id, message_id, caller.user_id)
+            .await?;
+    }
     Ok(Json(AckResponse { token: None }))
 }
