@@ -75,3 +75,7 @@ is reported at once.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` is not consumed yet; metrics are exposed on `/metrics`.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
+
+## Git hooks
+
+Tests run locally, not in CI. Install [lefthook](https://lefthook.dev/installation/) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
