@@ -16,6 +16,7 @@ pub mod paging;
 pub mod permissions;
 pub mod reaction;
 pub mod read_state;
+pub mod search;
 pub mod snowflake;
 
 pub use access::{Audience, ChannelAccess};
@@ -31,6 +32,7 @@ pub use paging::{HistoryCursor, PageLimit, Scan, ScanDirection};
 pub use permissions::Permissions;
 pub use reaction::{Emoji, ReactionCount, ReactionRow};
 pub use read_state::ReadState;
+pub use search::{HasFilter, HasSet, IndexedMessage, SearchFilters, SortBy, SortOrder};
 pub use snowflake::{Snowflake, SnowflakeGenerator, WorkerId};
 
 /// Channel identifiers are Snowflakes issued by the api service.

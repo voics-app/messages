@@ -85,6 +85,23 @@ fn unavailable(detail: &str) -> (StatusCode, u32, String, Option<Value>) {
     )
 }
 
+/// Discord's 429 body, plus the `Retry-After` header (whole seconds, rounded up).
+fn rate_limited(retry_after_ms: u64) -> Response {
+    let seconds = retry_after_ms.div_ceil(1000).max(1);
+    let body = json!({
+        "code": 0,
+        "message": "You are being rate limited.",
+        "retry_after": retry_after_ms as f64 / 1000.0,
+        "global": false,
+    });
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(axum::http::header::RETRY_AFTER, seconds.to_string())],
+        Json(body),
+    )
+        .into_response()
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message, errors) = match self {
@@ -93,6 +110,7 @@ impl IntoResponse for ApiError {
                 (status, code, error.to_string(), errors)
             }
             Self::App(AppError::Unavailable(port)) => unavailable(&port.to_string()),
+            Self::App(AppError::RateLimited { retry_after_ms }) => return rate_limited(retry_after_ms),
             Self::Unavailable(detail) => unavailable(&detail),
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,

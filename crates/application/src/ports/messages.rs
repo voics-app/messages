@@ -34,4 +34,8 @@ pub trait MessageRepository: Send + Sync {
     async fn scan_bucket(&self, query: BucketQuery) -> Result<Vec<Message>, PortError>;
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError>;
+
+    /// Every channel that has ever held a message, with its newest message id
+    /// (a full scan of a small table: used by the search backfill only).
+    async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError>;
 }

@@ -129,6 +129,7 @@ pub fn message_dto(
                 username: w.username.clone(),
                 avatar_url: w.avatar_url.clone(),
             }),
+        hit: None,
     }
 }
 

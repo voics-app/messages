@@ -8,3 +8,4 @@ pub mod internal;
 pub mod messages;
 pub mod pins;
 pub mod reactions;
+pub mod search;
