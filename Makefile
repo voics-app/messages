@@ -24,3 +24,8 @@ build:
 
 docker:
 	docker build --build-arg VERSION=$(VERSION) --build-arg REVISION=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -t $(IMAGE):$(VERSION) .
+
+# Install the pre-push hook (lint + unit tests, see lefthook.yml).
+.PHONY: hooks
+hooks:
+	lefthook install
