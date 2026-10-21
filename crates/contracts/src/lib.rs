@@ -178,6 +178,11 @@ pub struct AttachmentDto {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub description: Option<String>,
+    /// `AttachmentFlags` bit set; omitted when zero.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub flags: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +222,12 @@ pub struct AttachmentReferenceDto {
     #[serde(default)]
     pub filename: Option<String>,
     pub uploaded_filename: String,
+    /// Alt text.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `AttachmentFlags` bits; only IS_SPOILER (8) is kept.
+    #[serde(default)]
+    pub flags: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,6 +242,9 @@ pub struct EditMessageRequest {
     pub content: Option<String>,
     #[serde(default)]
     pub embeds: Option<Vec<Value>>,
+    /// Only SUPPRESS_EMBEDS (4) is honoured.
+    #[serde(default)]
+    pub flags: Option<u32>,
 }
 
 /// `POST /channels/{id}/messages/bulk-delete`.

@@ -73,8 +73,8 @@ impl<'a> Scanner<'a> {
                 self.skip_past("-->", start + 4);
             } else if rest.starts_with("</head") || rest.starts_with("<body") {
                 break;
-            } else if let Some(name) = tag_name(rest) {
-                self.handle_tag(name, start);
+            } else if let Some(name) = tag_name(rest).map(str::to_owned) {
+                self.handle_tag(&name, start);
             }
         }
         self.out
@@ -143,9 +143,7 @@ impl<'a> Scanner<'a> {
 /// The tag name when `rest` starts with `<name` followed by a delimiter.
 fn tag_name(rest: &str) -> Option<&str> {
     let after = rest.strip_prefix('<')?;
-    let len = after
-        .find(|c: char| !c.is_ascii_alphanumeric())
-        .unwrap_or(after.len());
+    let len = after.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(after.len());
     (len > 0).then(|| &after[..len])
 }
 
@@ -224,9 +222,11 @@ pub fn decode_entities(text: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         let candidate = &rest[amp..];
-        match candidate.find(';').filter(|end| *end <= 10).and_then(|end| {
-            decode_reference(&candidate[1..end]).map(|ch| (ch, end + 1))
-        }) {
+        match candidate
+            .find(';')
+            .filter(|end| *end <= 10)
+            .and_then(|end| decode_reference(&candidate[1..end]).map(|ch| (ch, end + 1)))
+        {
             Some((ch, consumed)) => {
                 out.push(ch);
                 rest = &candidate[consumed..];
@@ -292,7 +292,11 @@ mod tests {
             meta.link_href("alternate", "application/json+oembed"),
             Some("https://e.example/oembed?url=x&format=json")
         );
-        assert_eq!(meta.metas.iter().filter(|(k, _)| k == "og:title").count(), 1, "body is ignored");
+        assert_eq!(
+            meta.metas.iter().filter(|(k, _)| k == "og:title").count(),
+            1,
+            "body is ignored"
+        );
     }
 
     #[test]
@@ -308,7 +312,8 @@ mod tests {
 
     #[test]
     fn quoted_angle_brackets_do_not_end_a_tag() {
-        let meta = PageMeta::parse(r#"<meta property="og:title" content="a > b"><meta name="description" content="d">"#);
+        let meta =
+            PageMeta::parse(r#"<meta property="og:title" content="a > b"><meta name="description" content="d">"#);
         assert_eq!(meta.first("og:title"), Some("a > b"));
         assert_eq!(meta.first("description"), Some("d"));
     }
@@ -337,12 +342,17 @@ mod tests {
 
     #[test]
     fn entities_decode_and_unknown_ones_stay() {
-        assert_eq!(decode_entities("a &amp; b &lt;c&gt; &copy; &unknown; & &#65; &#x42; &#0; &#xD800;"), "a & b <c> \u{a9} &unknown; & A B &#0; &#xD800;");
+        assert_eq!(
+            decode_entities("a &amp; b &lt;c&gt; &copy; &unknown; & &#65; &#x42; &#0; &#xD800;"),
+            "a & b <c> \u{a9} &unknown; & A B &#0; &#xD800;"
+        );
     }
 
     #[test]
     fn the_first_non_empty_value_wins() {
-        let meta = PageMeta::parse(r#"<meta property="og:image" content=""><meta property="og:image" content="a.png"><meta property="og:image" content="b.png">"#);
+        let meta = PageMeta::parse(
+            r#"<meta property="og:image" content=""><meta property="og:image" content="a.png"><meta property="og:image" content="b.png">"#,
+        );
         assert_eq!(meta.first("og:image"), Some("a.png"));
         assert_eq!(meta.first_of(&["twitter:image", "og:image"]), Some("a.png"));
     }

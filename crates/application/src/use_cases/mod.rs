@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::history_reader::HistoryReader;
 use crate::ports::{
-    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator,
-    LinkUnfurler, MessageRepository, PinRepository, ReactionRepository, ReadStateRepository, UserDirectory,
+    ActivityRepository, AttachmentStorage, ChannelAccessProvider, Clock, EventPublisher, IdGenerator, LinkUnfurler,
+    MessageRepository, PinRepository, ReactionRepository, ReadStateRepository, UserDirectory,
 };
 
 mod acknowledge_message;

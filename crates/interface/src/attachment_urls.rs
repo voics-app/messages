@@ -12,6 +12,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use discordy_messages_application::ports::Clock;
 use discordy_messages_domain::{Attachment, UploadKey};
 use hmac::{Hmac, Mac};
@@ -21,6 +23,8 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// How long a freshly signed URL stays valid.
 pub const DEFAULT_URL_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Signature domain of media-proxy URLs.
+const PROXY_DOMAIN: &str = "v1-media";
 /// Minimum accepted signing key length in bytes.
 pub const MIN_KEY_BYTES: usize = 32;
 
@@ -75,10 +79,48 @@ impl AttachmentUrls {
         }
     }
 
-    fn mac(&self, path: &str, expires: u64, issued: u64) -> HmacSha256 {
+    /// `domain` keeps signatures of different URL kinds from being
+    /// interchangeable under the one key.
+    fn mac_in(&self, domain: &str, subject: &str, expires: u64, issued: u64) -> HmacSha256 {
         let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
-        mac.update(format!("v1\n{path}\n{expires:x}\n{issued:x}").as_bytes());
+        mac.update(format!("{domain}\n{subject}\n{expires:x}\n{issued:x}").as_bytes());
         mac
+    }
+
+    fn mac(&self, path: &str, expires: u64, issued: u64) -> HmacSha256 {
+        self.mac_in("v1", path, expires, issued)
+    }
+
+    /// The media-proxy URL of a remote image or video:
+    /// `{CDN_PUBLIC_URL}/external/{base64url(remote)}?ex&is&hm`. Signed with
+    /// the same key as attachments but under its own domain tag.
+    pub fn proxy_url(&self, remote: &str) -> String {
+        let subject = URL_SAFE_NO_PAD.encode(remote);
+        let issued = self.now_s();
+        let expires = issued + self.ttl.as_secs();
+        let mac = hex::encode(
+            self.mac_in(PROXY_DOMAIN, &subject, expires, issued)
+                .finalize()
+                .into_bytes(),
+        );
+        format!("{}/external/{subject}?ex={expires:x}&is={issued:x}&hm={mac}", self.base)
+    }
+
+    /// Checks a media-proxy request and returns the remote URL it names.
+    pub fn verify_proxy(&self, subject: &str, params: &SignedParams) -> Result<String, VerifyError> {
+        let provided = hex::decode(&params.mac).map_err(|_| VerifyError::Malformed)?;
+        self.mac_in(PROXY_DOMAIN, subject, params.expires, params.issued)
+            .verify_slice(&provided)
+            .map_err(|_| VerifyError::BadSignature)?;
+        if self.now_s() >= params.expires {
+            return Err(VerifyError::Expired);
+        }
+        let bytes = URL_SAFE_NO_PAD.decode(subject).map_err(|_| VerifyError::Malformed)?;
+        String::from_utf8(bytes).map_err(|_| VerifyError::Malformed)
+    }
+
+    pub(crate) fn remaining_s(&self, params: &SignedParams) -> u64 {
+        params.expires.saturating_sub(self.now_s())
     }
 
     pub(crate) fn now_s(&self) -> u64 {
@@ -159,6 +201,8 @@ mod tests {
             size: 1,
             width: None,
             height: None,
+            description: None,
+            flags: 0,
         }
     }
 
@@ -261,6 +305,48 @@ mod tests {
         assert_eq!(
             signer(KEY, &clock).verify("5", "9", "cat.png", &params),
             Err(VerifyError::Malformed)
+        );
+    }
+
+    #[test]
+    fn proxy_urls_round_trip_and_expire() {
+        let clock = clock_at(1_800_000_000);
+        let urls = signer(KEY, &clock);
+        let remote = "https://img.example/a b.png?x=1&y=2";
+        let url = urls.proxy_url(remote);
+        assert!(url.starts_with("http://localhost:8000/cdn/external/"), "{url}");
+        let subject = url.split('?').next().unwrap().rsplit('/').next().unwrap().to_owned();
+        let params = params_of(&url);
+        assert_eq!(urls.verify_proxy(&subject, &params).as_deref(), Ok(remote));
+        clock.advance_ms(86_400_000);
+        assert_eq!(urls.verify_proxy(&subject, &params), Err(VerifyError::Expired));
+    }
+
+    #[test]
+    fn proxy_urls_cannot_be_retargeted_or_borrowed_from_attachments() {
+        let clock = clock_at(1_800_000_000);
+        let urls = signer(KEY, &clock);
+        let url = urls.proxy_url("https://img.example/a.png");
+        let params = params_of(&url);
+        let other = URL_SAFE_NO_PAD.encode("http://169.254.169.254/");
+        assert_eq!(urls.verify_proxy(&other, &params), Err(VerifyError::BadSignature));
+        // An attachment signature for the same string is not a proxy signature.
+        let attachment_mac = hex::encode(
+            urls.mac("5/9/cat.png", params.expires, params.issued)
+                .finalize()
+                .into_bytes(),
+        );
+        let borrowed = SignedParams {
+            mac: attachment_mac,
+            ..params.clone()
+        };
+        let subject = URL_SAFE_NO_PAD.encode("5/9/cat.png");
+        assert_eq!(urls.verify_proxy(&subject, &borrowed), Err(VerifyError::BadSignature));
+        let other_key = signer("another-signing-key-0123456789abcdef", &clock);
+        let subject = URL_SAFE_NO_PAD.encode("https://img.example/a.png");
+        assert_eq!(
+            other_key.verify_proxy(&subject, &params),
+            Err(VerifyError::BadSignature)
         );
     }
 

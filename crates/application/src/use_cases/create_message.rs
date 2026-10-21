@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
+use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
     Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, InteractionLink, Message,
     MessageDraft, MessageId, ReadState, UploadKey, UserId, WebhookAuthor,
 };
-use discordy_messages_domain::attachment::{upload_flags, validate_description};
 
 use super::MessagingPorts;
 use super::UnfurlLinks;

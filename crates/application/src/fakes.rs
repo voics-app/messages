@@ -512,6 +512,42 @@ impl LinkUnfurler for FakeUnfurler {
     }
 }
 
+/// A media proxy upstream answering from a map of remote URL to bytes.
+#[derive(Default)]
+pub struct FakeMedia {
+    files: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    pub opened: Mutex<Vec<String>>,
+}
+
+impl FakeMedia {
+    pub fn put(&self, url: &str, content_type: &str, body: &[u8]) {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(url.to_owned(), (content_type.to_owned(), body.to_vec()));
+    }
+}
+
+#[async_trait]
+impl RemoteMediaFetcher for FakeMedia {
+    async fn open(&self, url: &str, _range: Option<&str>) -> Result<RemoteMedia, MediaError> {
+        self.opened.lock().unwrap().push(url.to_owned());
+        if url.contains("169.254.") {
+            return Err(MediaError::Forbidden);
+        }
+        let Some((content_type, body)) = self.files.lock().unwrap().get(url).cloned() else {
+            return Err(MediaError::Unavailable("not found".into()));
+        };
+        Ok(RemoteMedia {
+            status: 200,
+            content_type,
+            content_length: Some(body.len() as u64),
+            content_range: None,
+            body: futures::stream::once(async move { Ok(bytes::Bytes::from(body)) }).boxed(),
+        })
+    }
+}
+
 /// All fakes, wired into a [`MessagingPorts`].
 pub struct Harness {
     pub access: Arc<FakeAccess>,
@@ -524,6 +560,7 @@ pub struct Harness {
     pub clock: Arc<FakeClock>,
     pub users: Arc<FakeUsers>,
     pub unfurler: Arc<FakeUnfurler>,
+    pub media: Arc<FakeMedia>,
     pub ports: MessagingPorts,
 }
 
@@ -595,6 +632,7 @@ impl Harness {
             clock,
             users,
             unfurler,
+            media: Arc::new(FakeMedia::default()),
             ports,
         }
     }

@@ -45,7 +45,7 @@ impl ScyllaMessageRepository {
             .await?,
             update_content: prepare(
                 s,
-                "UPDATE messages SET content = ?, embeds = ?, mentions = ?, mention_roles = ?, \
+                "UPDATE messages SET content = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
                  mention_everyone = ?, edited_at = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
             )
             .await?,

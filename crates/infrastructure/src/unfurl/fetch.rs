@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, RANGE, USER_AGENT};
+use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, RANGE};
 use reqwest::redirect::Policy;
 use reqwest::{Client, Response, StatusCode};
 use url::Url;

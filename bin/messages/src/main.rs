@@ -19,6 +19,7 @@ use discordy_messages_infrastructure::scylla::{
 };
 use discordy_messages_infrastructure::storage::{S3AttachmentStorage, S3Settings};
 use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
+use discordy_messages_infrastructure::unfurl::{HttpLinkUnfurler, HttpMediaFetcher, SafeHttp, SsrfPolicy};
 use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
 use probes::{KafkaProbe, ScyllaProbe};
@@ -97,6 +98,9 @@ async fn run(config: Config) -> Result<(), StartupError> {
         clock.clone(),
     );
     let users = Arc::new(HttpUserDirectory::new(api.clone()));
+    // One guarded client for everything that reaches third-party sites.
+    let outbound = SafeHttp::new(SsrfPolicy::strict())?;
+    let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
@@ -115,6 +119,7 @@ async fn run(config: Config) -> Result<(), StartupError> {
         clock,
         history: Arc::new(HistoryReader::new(messages, reactions)),
         users,
+        unfurler: Arc::new(HttpLinkUnfurler::new(outbound)),
     };
     let probes: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(ScyllaProbe(session)), Arc::new(KafkaProbe(kafka))];
     let state = AppState::new(
@@ -122,6 +127,7 @@ async fn run(config: Config) -> Result<(), StartupError> {
         authenticator,
         InternalToken::new(&config.internal_service_token),
         urls,
+        media,
         probes,
     );
 

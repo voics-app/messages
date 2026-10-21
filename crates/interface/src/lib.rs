@@ -5,6 +5,7 @@ pub mod attachment_urls;
 pub mod authors;
 pub mod cors;
 pub mod dto;
+pub mod embed_proxy;
 pub mod envelope;
 pub mod error;
 pub mod extract;

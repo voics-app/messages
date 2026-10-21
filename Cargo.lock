@@ -697,6 +697,7 @@ dependencies = [
  "discordy-messages-application",
  "discordy-messages-contracts",
  "discordy-messages-domain",
+ "discordy-messages-infrastructure",
  "futures",
  "imagesize",
  "jsonwebtoken",

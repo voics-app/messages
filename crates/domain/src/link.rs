@@ -24,7 +24,9 @@ pub const PLAYER_IFRAME_HOSTS: [&str; 6] = [
 
 /// Whether `host` may serve an embedded player.
 pub fn is_player_iframe_host(host: &str) -> bool {
-    PLAYER_IFRAME_HOSTS.iter().any(|allowed| host.eq_ignore_ascii_case(allowed))
+    PLAYER_IFRAME_HOSTS
+        .iter()
+        .any(|allowed| host.eq_ignore_ascii_case(allowed))
 }
 
 const TRAILING_PUNCTUATION: &[char] = &['.', ',', ';', ':', '!', '?', '\'', '"', '*', '_', '~', '|', '`'];
@@ -80,9 +82,7 @@ fn trim_link(mut link: &str) -> &str {
             .into_iter()
             .find(|(close, _)| trimmed.ends_with(*close));
         match closing {
-            Some((close, open))
-                if trimmed.matches(close).count() > trimmed.matches(open).count() =>
-            {
+            Some((close, open)) if trimmed.matches(close).count() > trimmed.matches(open).count() => {
                 link = &trimmed[..trimmed.len() - 1];
             }
             _ if trimmed.len() == link.len() => return trimmed,
@@ -135,7 +135,10 @@ mod tests {
 
     #[test]
     fn angle_brackets_suppress_the_preview() {
-        assert_eq!(links("<https://a.example> https://b.example"), vec!["https://b.example"]);
+        assert_eq!(
+            links("<https://a.example> https://b.example"),
+            vec!["https://b.example"]
+        );
     }
 
     #[test]

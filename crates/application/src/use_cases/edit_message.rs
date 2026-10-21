@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use discordy_messages_domain::{ChannelId, MessageEdit, MessageId, UserId};
 
+use super::support::{announce, event, find_message, view_for};
 use super::unfurl_links::is_generated_embed;
 use super::{MessagingPorts, UnfurlLinks};
-use super::support::{announce, event, find_message, view_for};
 use crate::error::AppResult;
 use crate::ports::{
     ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, ReactionRepository,
@@ -116,7 +116,10 @@ mod tests {
     async fn suppressing_embeds_drops_previews_keeps_bot_embeds_and_is_not_an_edit() {
         let h = Harness::new();
         let mut original = h.seed(ALICE, "https://a.example/").await;
-        original.embeds = vec![r#"{"type":"link","url":"https://a.example/"}"#.into(), r#"{"type":"rich"}"#.into()];
+        original.embeds = vec![
+            r#"{"type":"link","url":"https://a.example/"}"#.into(),
+            r#"{"type":"rich"}"#.into(),
+        ];
         h.messages.update(&original).await.unwrap();
         let view = EditMessage::new(&h.ports)
             .execute(CHANNEL, original.id, ALICE, flags_only(4))
@@ -158,7 +161,9 @@ mod tests {
             flags: Some(0),
             ..MessageEdit::default()
         };
-        let result = EditMessage::new(&h.ports).execute(CHANNEL, original.id, BOB, mixed).await;
+        let result = EditMessage::new(&h.ports)
+            .execute(CHANNEL, original.id, BOB, mixed)
+            .await;
         assert_eq!(result, Err(AppError::Domain(DomainError::MissingPermissions)));
         let view = EditMessage::new(&h.ports)
             .execute(CHANNEL, original.id, ALICE, flags_only(0))

@@ -94,6 +94,8 @@ pub async fn create(
             .into_iter()
             .map(|a| AttachmentReference {
                 uploaded_filename: a.uploaded_filename,
+                description: a.description,
+                flags: a.flags.unwrap_or(0),
             })
             .collect(),
         embeds: json_texts(body.embeds),
@@ -117,6 +119,7 @@ pub async fn edit(
     let edit = MessageEdit {
         content: body.content,
         embeds: body.embeds.map(|embeds| embeds.iter().map(Value::to_string).collect()),
+        flags: body.flags,
     };
     let view = state
         .use_cases

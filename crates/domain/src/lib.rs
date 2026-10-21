@@ -23,9 +23,9 @@ pub use attachment::{ATTACHMENT_FLAG_SPOILER, Attachment, AttachmentFilename, Up
 pub use bucket::Bucket;
 pub use delivery_mode::DeliveryMode;
 pub use error::{DomainError, FieldError};
+pub use link::{MAX_UNFURLED_LINKS, extract_links, is_player_iframe_host};
 pub use mentions::Mentions;
 pub use message::{Message, MessageDraft, MessageEdit, MessageKind};
-pub use link::{MAX_UNFURLED_LINKS, extract_links, is_player_iframe_host};
 pub use message_origin::{FLAG_EPHEMERAL, FLAG_SUPPRESS_EMBEDS, InteractionLink, WebhookAuthor};
 pub use paging::{HistoryCursor, PageLimit, Scan, ScanDirection};
 pub use permissions::Permissions;

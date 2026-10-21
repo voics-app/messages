@@ -71,6 +71,8 @@ fn internal_command(
             .into_iter()
             .map(|a| AttachmentReference {
                 uploaded_filename: a.uploaded_filename,
+                description: a.description,
+                flags: a.flags.unwrap_or(0),
             })
             .collect(),
         embeds: json_texts(body.embeds),

@@ -243,7 +243,17 @@ mod tests {
 
     #[test]
     fn public_ipv4_is_allowed() {
-        for text in ["1.1.1.1", "8.8.8.8", "93.184.216.34", "100.63.255.255", "100.128.0.1", "172.15.0.1", "172.32.0.1", "198.17.0.1", "198.20.0.1"] {
+        for text in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "93.184.216.34",
+            "100.63.255.255",
+            "100.128.0.1",
+            "172.15.0.1",
+            "172.32.0.1",
+            "198.17.0.1",
+            "198.20.0.1",
+        ] {
             assert!(!is_forbidden_ip(ip(text)), "{text} must be allowed");
         }
     }
@@ -287,7 +297,13 @@ mod tests {
 
     #[test]
     fn public_ipv6_is_allowed_even_when_it_wraps_a_public_ipv4() {
-        for text in ["2606:4700:4700::1111", "2a00:1450:4001:81b::200e", "::ffff:8.8.8.8", "64:ff9b::808:808", "2002:808:808::1"] {
+        for text in [
+            "2606:4700:4700::1111",
+            "2a00:1450:4001:81b::200e",
+            "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
             assert!(!is_forbidden_ip(ip(text)), "{text} must be allowed");
         }
     }
@@ -299,18 +315,34 @@ mod tests {
         assert_eq!(strict.check_url(&url("http://example.com:80/a")), Ok(()));
         assert_eq!(strict.check_url(&url("ftp://example.com/a")), Err(Blocked::Scheme));
         assert_eq!(strict.check_url(&url("file:///etc/passwd")), Err(Blocked::Scheme));
-        assert_eq!(strict.check_url(&url("https://user:pw@example.com/")), Err(Blocked::Credentials));
+        assert_eq!(
+            strict.check_url(&url("https://user:pw@example.com/")),
+            Err(Blocked::Credentials)
+        );
         assert_eq!(strict.check_url(&url("https://example.com:6379/")), Err(Blocked::Port));
         assert_eq!(strict.check_url(&url("http://127.0.0.1/")), Err(Blocked::Address));
         assert_eq!(strict.check_url(&url("http://[::1]/")), Err(Blocked::Address));
-        assert_eq!(strict.check_url(&url("http://[::ffff:10.0.0.1]/")), Err(Blocked::Address));
-        assert_eq!(strict.check_url(&url("http://169.254.169.254/latest/meta-data")), Err(Blocked::Address));
+        assert_eq!(
+            strict.check_url(&url("http://[::ffff:10.0.0.1]/")),
+            Err(Blocked::Address)
+        );
+        assert_eq!(
+            strict.check_url(&url("http://169.254.169.254/latest/meta-data")),
+            Err(Blocked::Address)
+        );
     }
 
     #[test]
     fn alternative_ipv4_notations_are_normalised_before_the_check() {
         let strict = SsrfPolicy::strict();
-        for text in ["http://2130706433/", "http://0x7f.0.0.1/", "http://0177.0.0.1/", "http://127.1/", "http://0/", "http://0xA9FEA9FE/"] {
+        for text in [
+            "http://2130706433/",
+            "http://0x7f.0.0.1/",
+            "http://0177.0.0.1/",
+            "http://127.1/",
+            "http://0/",
+            "http://0xA9FEA9FE/",
+        ] {
             assert_eq!(strict.check_url(&url(text)), Err(Blocked::Address), "{text}");
         }
     }
@@ -335,8 +367,14 @@ mod tests {
     fn the_loopback_exception_is_limited_to_the_test_policy() {
         let lenient = SsrfPolicy::allow_loopback_for_tests();
         assert_eq!(lenient.check_url(&url("http://127.0.0.1:41234/x")), Ok(()));
-        assert_eq!(lenient.check_url(&url("http://10.0.0.1:41234/x")), Err(Blocked::Address));
-        assert_eq!(lenient.check_url(&url("http://169.254.169.254/")), Err(Blocked::Address));
+        assert_eq!(
+            lenient.check_url(&url("http://10.0.0.1:41234/x")),
+            Err(Blocked::Address)
+        );
+        assert_eq!(
+            lenient.check_url(&url("http://169.254.169.254/")),
+            Err(Blocked::Address)
+        );
         assert!(SsrfPolicy::strict().is_forbidden(ip("127.0.0.1")));
     }
 
