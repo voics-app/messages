@@ -38,6 +38,10 @@ fn message(channel: Snowflake, id: Snowflake, content: &str) -> Message {
 
 #[tokio::test]
 async fn scylla_adapters_against_a_real_node() {
+    if !support::cpu_supports_scylla() {
+        eprintln!("skipping: ScyllaDB needs SSE4.2 and PCLMULQDQ, which this CPU does not expose");
+        return;
+    }
     let scylla = support::start_scylla("discordy_it").await;
     let session = Arc::clone(&scylla.session);
 
