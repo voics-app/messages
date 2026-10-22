@@ -5,7 +5,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
 use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
-use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
+use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, ForwardSource};
 use discordy_messages_domain::{HistoryCursor, MessageEdit, PageLimit};
 use serde::Deserialize;
 use serde_json::Value;
@@ -80,10 +80,27 @@ pub async fn create(
     ApiPath(Id(channel_id)): ApiPath<Id>,
     ApiJson(body): ApiJson<CreateMessageRequest>,
 ) -> Result<Json<MessageDto>, ApiError> {
-    let reply_to = body
-        .message_reference
-        .map(|reference| parse_id("message_reference", &reference.message_id))
-        .transpose()?;
+    let (reply_to, forward) = match body.message_reference {
+        None => (None, None),
+        Some(reference) => {
+            let message_id = parse_id("message_reference", &reference.message_id)?;
+            match reference.kind.unwrap_or(0) {
+                0 => (Some(message_id), None),
+                1 => {
+                    let raw = reference
+                        .channel_id
+                        .as_deref()
+                        .ok_or_else(|| ApiError::invalid("message_reference", "channel_id is required to forward"))?;
+                    let source = ForwardSource {
+                        channel_id: parse_id("message_reference", raw)?,
+                        message_id,
+                    };
+                    (None, Some(source))
+                }
+                _ => return Err(ApiError::invalid("message_reference", "unknown reference type")),
+            }
+        }
+    };
     let command = CreateMessageCommand {
         channel_id,
         author_id: caller.user_id,
@@ -102,6 +119,7 @@ pub async fn create(
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,
+        forward,
         flags: 0,
         webhook: None,
         interaction: None,

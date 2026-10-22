@@ -64,7 +64,8 @@ pub(crate) async fn purge_dependents(
     if message.pinned {
         pins.unpin(message.channel_id, message.id).await?;
     }
-    for attachment in &message.attachments {
+    let snapshot_files = message.forward.iter().flat_map(|f| f.snapshot.attachments.iter());
+    for attachment in message.attachments.iter().chain(snapshot_files) {
         let key = attachment.key(message.channel_id);
         if let Err(error) = storage.delete(&key).await {
             tracing::warn!(key = %key.as_object_key(), %error, "failed to delete attachment object");

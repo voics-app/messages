@@ -394,6 +394,19 @@ impl AttachmentStorage for FakeStorage {
         }))
     }
 
+    async fn copy(&self, from: &UploadKey, to: &UploadKey) -> Result<bool, PortError> {
+        let source = from.as_object_key();
+        let stored = self.objects.lock().unwrap().get(&source).cloned();
+        let Some(stored) = stored else { return Ok(false) };
+        let target = to.as_object_key();
+        self.objects.lock().unwrap().insert(target.clone(), stored);
+        let body = self.bodies.lock().unwrap().get(&source).cloned();
+        if let Some(body) = body {
+            self.bodies.lock().unwrap().insert(target, body);
+        }
+        Ok(true)
+    }
+
     async fn delete(&self, key: &UploadKey) -> Result<(), PortError> {
         self.deleted.lock().unwrap().push(key.as_object_key());
         Ok(())

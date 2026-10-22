@@ -157,6 +157,33 @@ impl AttachmentStorage for S3AttachmentStorage {
         }))
     }
 
+    async fn copy(&self, from: &UploadKey, to: &UploadKey) -> Result<bool, PortError> {
+        // Attachments are at most 25 MiB, so the object is buffered between the
+        // GET and the PUT instead of relying on server-side copy headers.
+        let Some(object) = self.open(from, None).await? else {
+            return Ok(false);
+        };
+        let mut body = Vec::new();
+        let mut stream = object.body;
+        while let Some(chunk) = stream.next().await {
+            body.extend_from_slice(&chunk?);
+        }
+        let url = self
+            .internal
+            .put_object(Some(&self.credentials), &to.as_object_key())
+            .sign(SERVER_URL_TTL);
+        let mut request = self.http.put(url).body(body);
+        if let Some(content_type) = object.content_type {
+            request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+        }
+        let status = request.send().await.map_err(port_error)?.status();
+        if status.is_success() {
+            Ok(true)
+        } else {
+            Err(port_error(format!("PUT object returned {status}")))
+        }
+    }
+
     async fn delete(&self, key: &UploadKey) -> Result<(), PortError> {
         let url = self
             .internal

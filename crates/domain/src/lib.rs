@@ -8,6 +8,7 @@ pub mod attachment;
 pub mod bucket;
 pub mod delivery_mode;
 pub mod error;
+pub mod forward;
 pub mod link;
 pub mod mentions;
 pub mod message;
@@ -24,6 +25,7 @@ pub use attachment::{ATTACHMENT_FLAG_SPOILER, Attachment, AttachmentFilename, Up
 pub use bucket::Bucket;
 pub use delivery_mode::DeliveryMode;
 pub use error::{DomainError, FieldError};
+pub use forward::{ForwardOrigin, MessageSnapshot};
 pub use link::{MAX_UNFURLED_LINKS, extract_links, is_player_iframe_host};
 pub use mentions::Mentions;
 pub use message::{Message, MessageDraft, MessageEdit, MessageKind};

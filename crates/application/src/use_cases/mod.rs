@@ -35,7 +35,7 @@ mod unpin_message;
 pub use acknowledge_message::AcknowledgeMessage;
 pub use add_reaction::AddReaction;
 pub use bulk_delete_messages::BulkDeleteMessages;
-pub use create_message::{AttachmentReference, CreateMessage, CreateMessageCommand};
+pub use create_message::{AttachmentReference, CreateMessage, CreateMessageCommand, ForwardSource};
 pub use create_upload_slots::{CreateUploadSlots, UploadRequest};
 pub use delete_message::DeleteMessage;
 pub use edit_message::EditMessage;

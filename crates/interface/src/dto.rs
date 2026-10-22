@@ -1,11 +1,13 @@
 //! Mapping between domain objects and the wire contracts.
 
 use contracts::{
-    AttachmentDto, AuthorOverrideDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto, ReactionDto,
-    ReadStateDto, UserRef,
+    AttachmentDto, AuthorOverrideDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto,
+    MessageSnapshotDto, ReactionDto, ReadStateDto, SnapshotMessageDto, UserRef,
 };
 use discordy_messages_application::MessageView;
-use discordy_messages_domain::{Attachment, ChannelId, Emoji, GuildId, Message, ReactionCount, ReadState};
+use discordy_messages_domain::{
+    Attachment, ChannelId, Emoji, GuildId, Message, MessageSnapshot, ReactionCount, ReadState,
+};
 use serde_json::Value;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -74,6 +76,49 @@ fn embed_values(raw: &[String], urls: &AttachmentUrls) -> Vec<Value> {
         .collect()
 }
 
+fn reference_dto(message: &Message, guild_id: Option<GuildId>) -> Option<MessageReferenceDto> {
+    if let Some(origin) = &message.forward {
+        return Some(MessageReferenceDto {
+            kind: Some(1),
+            message_id: origin.message_id.to_string(),
+            channel_id: Some(origin.channel_id.to_string()),
+            guild_id: origin.guild_id.map(|g| g.to_string()),
+        });
+    }
+    message.reply_to.map(|id| MessageReferenceDto {
+        kind: None,
+        message_id: id.to_string(),
+        channel_id: Some(message.channel_id.to_string()),
+        guild_id: guild_id.map(|g| g.to_string()),
+    })
+}
+
+/// Snapshot files live under the channel of the message that carries them.
+fn snapshot_dto(channel_id: ChannelId, snapshot: &MessageSnapshot, urls: &AttachmentUrls) -> MessageSnapshotDto {
+    MessageSnapshotDto {
+        message: SnapshotMessageDto {
+            content: snapshot.content.clone(),
+            timestamp: rfc3339(snapshot.created_at_ms),
+            edited_timestamp: snapshot.edited_at_ms.map(rfc3339),
+            mentions: snapshot
+                .mentions
+                .users
+                .iter()
+                .map(|id| UserRef { id: id.to_string() })
+                .collect(),
+            mention_roles: snapshot.mentions.roles.iter().map(ToString::to_string).collect(),
+            attachments: snapshot
+                .attachments
+                .iter()
+                .map(|a| attachment_dto(channel_id, a, urls))
+                .collect(),
+            embeds: embed_values(&snapshot.embeds, urls),
+            kind: 0,
+            flags: snapshot.flags,
+        },
+    }
+}
+
 pub fn message_dto(
     message: &Message,
     reactions: &[ReactionCount],
@@ -110,11 +155,12 @@ pub fn message_dto(
         pinned: message.pinned,
         kind: message.kind.code(),
         flags: message.flags,
-        message_reference: message.reply_to.map(|id| MessageReferenceDto {
-            message_id: id.to_string(),
-            channel_id: Some(message.channel_id.to_string()),
-            guild_id: guild_id.map(|g| g.to_string()),
-        }),
+        message_reference: reference_dto(message, guild_id),
+        message_snapshots: message
+            .forward
+            .iter()
+            .map(|origin| snapshot_dto(message.channel_id, &origin.snapshot, urls))
+            .collect(),
         components: json_values(&message.components),
         webhook_id: message.webhook.as_ref().map(|w| w.webhook_id.to_string()),
         application_id: message.interaction.map(|i| i.application_id.to_string()),
