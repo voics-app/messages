@@ -1,7 +1,9 @@
 //! Route table.
 
 use axum::Router;
-use axum::extract::{Request, State};
+use std::time::Instant;
+
+use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
@@ -79,7 +81,16 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn count_responses(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let method = request.method().as_str().to_owned();
+    // The matched template keeps label cardinality bounded; unrouted paths share one label.
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| "unmatched".to_owned(), |p| p.as_str().to_owned());
+    let started = Instant::now();
     let response = next.run(request).await;
-    state.metrics.record(response.status().as_u16());
+    state
+        .metrics
+        .record(&method, &route, response.status().as_u16(), started.elapsed());
     response
 }

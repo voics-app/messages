@@ -11,8 +11,10 @@ use discordy_messages_application::PortError;
 use discordy_messages_application::fakes::{ALICE, BOB, CHANNEL, Harness, MEMBER, dm_access, guild_access};
 use discordy_messages_application::ports::{AccessError, AuthError, Authenticator, MessageRepository, Principal};
 use discordy_messages_domain::{Audience, DeliveryMode, Permissions};
+use discordy_messages_interface::metrics::{LATENCY_BUCKETS, Metrics};
 use discordy_messages_interface::{AppState, AttachmentUrls, InternalToken, ReadinessCheck, router};
 use http_body_util::BodyExt;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -65,7 +67,20 @@ fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
         ),
         harness.media.clone(),
         probes,
+        test_metrics(),
     ))
+}
+
+/// Per-test recorder, installed as this thread's default (tests run on current-thread runtimes).
+fn test_metrics() -> Metrics {
+    let recorder: &'static _ = Box::leak(Box::new(
+        PrometheusBuilder::new()
+            .set_buckets(&LATENCY_BUCKETS)
+            .unwrap()
+            .build_recorder(),
+    ));
+    std::mem::forget(metrics::set_default_local_recorder(recorder));
+    Metrics::new(recorder.handle())
 }
 
 fn app(harness: &Harness) -> Router {
@@ -498,8 +513,12 @@ async fn metrics_count_responses_by_status_class() {
         .await
         .unwrap();
     let text = String::from_utf8(response.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
-    assert!(text.contains("messages_http_requests_total{status=\"2xx\"} 1"));
-    assert!(text.contains("messages_http_requests_total{status=\"4xx\"} 1"));
+    assert!(
+        text.contains("http_requests_total{method=\"GET\",route=\"/healthz\",status=\"2xx\"} 1"),
+        "{text}"
+    );
+    assert!(text.contains("status=\"4xx\"} 1"), "{text}");
+    assert!(text.contains("http_request_duration_seconds_bucket{"), "{text}");
 }
 
 #[tokio::test]

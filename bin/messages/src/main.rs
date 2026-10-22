@@ -3,6 +3,7 @@
 
 mod config;
 mod probes;
+mod telemetry;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -26,7 +27,10 @@ use discordy_messages_infrastructure::unfurl::{HttpLinkUnfurler, HttpMediaFetche
 use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
 use probes::{KafkaProbe, ScyllaProbe};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -40,7 +44,14 @@ async fn main() -> ExitCode {
         }
     };
     init_tracing(&config);
-    match run(config).await {
+    let metrics = match telemetry::install_recorder() {
+        Ok(handle) => discordy_messages_interface::metrics::Metrics::new(handle),
+        Err(error) => {
+            eprintln!("metrics recorder: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(config, metrics).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(%error, "messages service stopped");
@@ -51,11 +62,13 @@ async fn main() -> ExitCode {
 
 fn init_tracing(config: &Config) {
     let filter = EnvFilter::try_new(&config.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    match config.environment {
-        Environment::Production => builder.json().init(),
-        Environment::Local => builder.init(),
+    let logs = match config.environment {
+        Environment::Production => tracing_subscriber::fmt::layer().json().boxed(),
+        Environment::Local => tracing_subscriber::fmt::layer().boxed(),
     }
+    .with_filter(filter);
+    let db = telemetry::PostgresLatency.with_filter(filter_fn(|meta| meta.target() == "sqlx::query"));
+    tracing_subscriber::registry().with(logs).with(db).init();
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,7 +83,7 @@ enum StartupError {
     Cors(#[from] InvalidOrigin),
 }
 
-async fn run(config: Config) -> Result<(), StartupError> {
+async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metrics) -> Result<(), StartupError> {
     let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
     let session = scylla::connect(&config.scylla_nodes, &config.scylla_keyspace).await?;
     let messages = Arc::new(ScyllaMessageRepository::new(session.clone()).await?);
@@ -144,6 +157,7 @@ async fn run(config: Config) -> Result<(), StartupError> {
         urls,
         media,
         probes,
+        metrics,
     );
 
     if let Some(pg) = pg_index {
