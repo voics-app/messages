@@ -1013,3 +1013,32 @@ async fn the_media_proxy_refuses_unsigned_tampered_and_forbidden_requests() {
     let (status, _, _) = fetch(&app, signed_missing.strip_prefix("http://cdn/cdn").unwrap(), None).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
+
+#[tokio::test]
+async fn reaction_users_can_be_listed_and_moderated() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+    let message = harness.seed(BOB, "react to me").await;
+    let app = app(&harness);
+    let base = format!("{}/{}/reactions/%F0%9F%91%8D", messages_uri(), message.id);
+
+    let (status, _) = call(&app, Method::PUT, &format!("{base}/@me"), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, users) = call(&app, Method::GET, &base, Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(users.as_array().unwrap().len(), 1);
+
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{base}/{}", BOB),
+        Some(ALICE_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::DELETE, &base, Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, users) = call(&app, Method::GET, &base, Some(ALICE_TOKEN), None).await;
+    assert!(users.as_array().unwrap().is_empty());
+}

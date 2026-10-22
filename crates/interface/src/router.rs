@@ -34,6 +34,14 @@ pub fn router(state: AppState) -> Router {
             delete(reactions::remove_all),
         )
         .route(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
+            get(reactions::list_users).delete(reactions::remove_emoji),
+        )
+        .route(
+            "/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/{user_id}",
+            delete(reactions::remove_user),
+        )
+        .route(
             "/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me",
             put(reactions::add).delete(reactions::remove_own),
         )

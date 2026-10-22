@@ -5,8 +5,9 @@ use std::sync::Arc;
 use discordy_messages_application::ports::{AttachmentStorage, Authenticator, RemoteMediaFetcher, UserDirectory};
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
-    GetLastMessageId, GetMessageHistory, GetMessageStats, ListPins, ListReadStates, MessagingPorts, PinMessage,
-    RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction, SearchMessages, UnpinMessage,
+    GetLastMessageId, GetMessageHistory, GetMessageStats, ListPins, ListReactionUsers, ListReadStates, MessagingPorts,
+    PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction, RemoveReactions,
+    SearchMessages, UnpinMessage,
 };
 use subtle::ConstantTimeEq;
 
@@ -37,6 +38,8 @@ pub struct UseCases {
     pub add_reaction: AddReaction,
     pub remove_own_reaction: RemoveOwnReaction,
     pub remove_all_reactions: RemoveAllReactions,
+    pub list_reaction_users: ListReactionUsers,
+    pub remove_reactions: RemoveReactions,
     pub pin: PinMessage,
     pub unpin: UnpinMessage,
     pub list_pins: ListPins,
@@ -61,6 +64,8 @@ impl UseCases {
             add_reaction: AddReaction::new(ports),
             remove_own_reaction: RemoveOwnReaction::new(ports),
             remove_all_reactions: RemoveAllReactions::new(ports),
+            list_reaction_users: ListReactionUsers::new(ports),
+            remove_reactions: RemoveReactions::new(ports),
             pin: PinMessage::new(ports),
             unpin: UnpinMessage::new(ports),
             list_pins: ListPins::new(ports),
