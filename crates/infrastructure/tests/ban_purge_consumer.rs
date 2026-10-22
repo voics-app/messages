@@ -57,8 +57,13 @@ fn envelope(kind: &str, user: &str, since_ms: u64) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Hosted runners start containers and elect Redpanda leaders slowly, and a consumer retry
+/// waits 3 s, so the bound is generous; it only matters when the test is about to fail.
+const DEADLINE: Duration = Duration::from_secs(90);
+
 async fn eventually(recorder: &Recorder, calls: usize) {
-    for _ in 0..100 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < DEADLINE {
         if recorder.calls.lock().unwrap().len() >= calls {
             return;
         }
@@ -72,6 +77,11 @@ async fn eventually(recorder: &Recorder, calls: usize) {
 
 #[tokio::test]
 async fn purge_events_reach_the_sink_and_survive_a_restart() {
+    // Consumer logs (fetch errors, retries) are captured by libtest and printed on failure.
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter("discordy_messages_infrastructure=debug,warn")
+        .try_init();
     let redpanda = support::start_redpanda().await;
     let pg = support::start_postgres().await;
     ClientBuilder::new(vec![redpanda.broker.clone()])
@@ -107,7 +117,8 @@ async fn purge_events_reach_the_sink_and_survive_a_restart() {
     );
 
     // The offset is stored after the batch.
-    for _ in 0..100 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < DEADLINE {
         if index.checkpoint(TOPIC, 0).await.unwrap() == Some(3) {
             break;
         }
