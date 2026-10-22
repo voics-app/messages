@@ -4,6 +4,7 @@
 
 mod support;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,13 +22,24 @@ const TOPIC: &str = "discordy.guild.v1";
 
 type Call = (Vec<Snowflake>, Snowflake, u64);
 
+/// Records purges. Once frozen it never returns, standing in for a stopped service: it neither
+/// advances its offset nor competes with a restarted consumer.
 #[derive(Default)]
-struct Recorder(Mutex<Vec<Call>>);
+struct Recorder {
+    calls: Mutex<Vec<Call>>,
+    frozen: AtomicBool,
+}
 
 #[async_trait]
 impl PurgeSink for Recorder {
     async fn purge(&self, channel_ids: &[Snowflake], author: Snowflake, since_ms: u64) -> Result<(), PortError> {
-        self.0.lock().unwrap().push((channel_ids.to_vec(), author, since_ms));
+        if self.frozen.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        self.calls
+            .lock()
+            .unwrap()
+            .push((channel_ids.to_vec(), author, since_ms));
         Ok(())
     }
 }
@@ -47,12 +59,15 @@ fn envelope(kind: &str, user: &str, since_ms: u64) -> Vec<u8> {
 
 async fn eventually(recorder: &Recorder, calls: usize) {
     for _ in 0..100 {
-        if recorder.0.lock().unwrap().len() >= calls {
+        if recorder.calls.lock().unwrap().len() >= calls {
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("expected {calls} purge calls, saw {}", recorder.0.lock().unwrap().len());
+    panic!(
+        "expected {calls} purge calls, saw {}",
+        recorder.calls.lock().unwrap().len()
+    );
 }
 
 #[tokio::test]
@@ -87,7 +102,7 @@ async fn purge_events_reach_the_sink_and_survive_a_restart() {
         .unwrap();
     eventually(&first, 1).await;
     assert_eq!(
-        first.0.lock().unwrap().clone(),
+        first.calls.lock().unwrap().clone(),
         vec![(vec![Snowflake::new(5), Snowflake::new(6)], Snowflake::new(7), 1234)]
     );
 
@@ -100,7 +115,9 @@ async fn purge_events_reach_the_sink_and_survive_a_restart() {
     }
     assert_eq!(index.checkpoint(TOPIC, 0).await.unwrap(), Some(3));
 
-    // A second consumer (a restart) starts at the stored offset: it sees only what came after.
+    // The first consumer stops; a second one (a restart) starts at the stored offset and sees only
+    // what came after it.
+    first.frozen.store(true, Ordering::SeqCst);
     sink.send(TOPIC, "3", envelope("BAN_MESSAGE_PURGE", "8", 99))
         .await
         .unwrap();
@@ -109,7 +126,7 @@ async fn purge_events_reach_the_sink_and_survive_a_restart() {
         .await
         .unwrap();
     eventually(&second, 1).await;
-    let calls = second.0.lock().unwrap().clone();
+    let calls = second.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].1, Snowflake::new(8));
 }
