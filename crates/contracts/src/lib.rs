@@ -10,6 +10,8 @@ use serde_json::Value;
 
 /// The event-bus topic this service produces to (P6).
 pub const MESSAGE_TOPIC: &str = "discordy.message.v1";
+/// The guild topic this service only consumes (bus-only BAN_MESSAGE_PURGE).
+pub const GUILD_TOPIC: &str = "discordy.guild.v1";
 /// Envelope schema version (P6).
 pub const ENVELOPE_VERSION: u32 = 1;
 
@@ -24,6 +26,8 @@ pub mod event_type {
     pub const MESSAGE_REACTION_REMOVE_ALL: &str = "MESSAGE_REACTION_REMOVE_ALL";
     pub const CHANNEL_PINS_UPDATE: &str = "CHANNEL_PINS_UPDATE";
     pub const MESSAGE_ACK: &str = "MESSAGE_ACK";
+    /// Consumed from [`super::GUILD_TOPIC`]: purge a banned user's recent messages.
+    pub const BAN_MESSAGE_PURGE: &str = "BAN_MESSAGE_PURGE";
 }
 
 /// Discord-style error codes (P9).
@@ -475,6 +479,17 @@ pub struct Envelope {
     pub channel_id: Option<String>,
     pub target_user_ids: Option<Vec<String>>,
     pub data: Value,
+}
+
+/// Payload of BAN_MESSAGE_PURGE on the guild topic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BanMessagePurgeData {
+    pub guild_id: String,
+    pub user_id: String,
+    pub channel_ids: Vec<String>,
+    /// Unix milliseconds: messages created at or after this are deleted.
+    pub since_ms: u64,
+    pub delete_message_seconds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
