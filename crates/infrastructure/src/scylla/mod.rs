@@ -60,11 +60,20 @@ pub(crate) async fn execute(
     statement: &PreparedStatement,
     values: impl scylla::serialize::row::SerializeRow,
 ) -> Result<(), PortError> {
-    session
+    let started = std::time::Instant::now();
+    let result = session
         .execute_unpaged(statement, values)
         .await
         .map(|_| ())
-        .map_err(port_error)
+        .map_err(port_error);
+    observe("write", started);
+    result
+}
+
+/// `db_query_duration_seconds{db="scylla"}`; `operation` is `read` or `write`.
+fn observe(operation: &'static str, started: std::time::Instant) {
+    metrics::histogram!("db_query_duration_seconds", "db" => "scylla", "operation" => operation)
+        .record(started.elapsed().as_secs_f64());
 }
 
 /// Runs a prepared statement and collects every row, paging transparently.
@@ -76,13 +85,19 @@ pub(crate) async fn fetch_all<R>(
 where
     R: for<'frame, 'metadata> scylla::deserialize::row::DeserializeRow<'frame, 'metadata> + Send + 'static,
 {
-    session
-        .execute_iter(statement.clone(), values)
-        .await
-        .map_err(port_error)?
-        .rows_stream::<R>()
-        .map_err(port_error)?
-        .try_collect()
-        .await
-        .map_err(port_error)
+    let started = std::time::Instant::now();
+    let result = async {
+        session
+            .execute_iter(statement.clone(), values)
+            .await
+            .map_err(port_error)?
+            .rows_stream::<R>()
+            .map_err(port_error)?
+            .try_collect()
+            .await
+            .map_err(port_error)
+    }
+    .await;
+    observe("read", started);
+    result
 }
