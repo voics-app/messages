@@ -104,6 +104,7 @@ impl AppState {
         urls: AttachmentUrls,
         media: Arc<dyn RemoteMediaFetcher>,
         readiness: Vec<Arc<dyn ReadinessCheck>>,
+        metrics: Metrics,
     ) -> Self {
         Self(Arc::new(Shared {
             use_cases: UseCases::new(ports),
@@ -114,7 +115,7 @@ impl AppState {
             storage: ports.storage.clone(),
             users: ports.users.clone(),
             readiness,
-            metrics: Metrics::default(),
+            metrics,
         }))
     }
 }

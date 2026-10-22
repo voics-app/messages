@@ -20,6 +20,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+metrics.workspace = true
 scylla = "1"
 rskafka = { version = "0.6", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
