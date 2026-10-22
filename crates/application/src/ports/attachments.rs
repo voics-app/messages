@@ -35,5 +35,9 @@ pub trait AttachmentStorage: Send + Sync {
     /// value. `None` when nothing is stored under `key`.
     async fn open(&self, key: &UploadKey, range: Option<&str>) -> Result<Option<ObjectRead>, PortError>;
 
+    /// Copies the object so the copy outlives the source (forwarded messages
+    /// own their files). `false` when the source object does not exist.
+    async fn copy(&self, from: &UploadKey, to: &UploadKey) -> Result<bool, PortError>;
+
     async fn delete(&self, key: &UploadKey) -> Result<(), PortError>;
 }

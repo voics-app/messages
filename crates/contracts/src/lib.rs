@@ -144,6 +144,28 @@ pub struct MessageDto {
     /// Search results only: true for the match, absent for its context.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hit: Option<bool>,
+    /// Forwarded messages: the frozen copy of the original.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub message_snapshots: Vec<MessageSnapshotDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageSnapshotDto {
+    pub message: SnapshotMessageDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotMessageDto {
+    pub content: String,
+    pub timestamp: String,
+    pub edited_timestamp: Option<String>,
+    pub mentions: Vec<UserRef>,
+    pub mention_roles: Vec<String>,
+    pub attachments: Vec<AttachmentDto>,
+    pub embeds: Vec<Value>,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub flags: u32,
 }
 
 /// `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search`.
@@ -171,6 +193,9 @@ pub struct AuthorOverrideDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageReferenceDto {
+    /// 1 for a forward; omitted for replies (DEFAULT).
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
+    pub kind: Option<u8>,
     pub message_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
@@ -245,7 +270,15 @@ pub struct AttachmentReferenceDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MessageReferenceRequest {
+    /// 0 reply (default), 1 forward.
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
     pub message_id: String,
+    /// Required for forwards: the channel the message is forwarded from.
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
 }
 
 /// `PATCH /channels/{id}/messages/{mid}`.

@@ -13,8 +13,8 @@ use discordy_messages_domain::bucket::BUCKET_SIZE_MS;
 use discordy_messages_domain::paging::plan;
 use discordy_messages_domain::snowflake::DISCORDY_EPOCH_MS;
 use discordy_messages_domain::{
-    Attachment, AttachmentFilename, Bucket, Emoji, HistoryCursor, Message, MessageDraft, PageLimit, ReadState,
-    ScanDirection, Snowflake,
+    Attachment, AttachmentFilename, Bucket, Emoji, ForwardOrigin, HistoryCursor, Mentions, Message, MessageDraft,
+    MessageSnapshot, PageLimit, ReadState, ScanDirection, Snowflake,
 };
 use discordy_messages_infrastructure::scylla::{
     ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
@@ -93,6 +93,37 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     assert_eq!(stored.content, "edited");
     assert!(stored.pinned);
     assert_eq!(stored.attachments, original.attachments);
+
+    let forwarded = Message::compose(
+        id_at(BUCKET_SIZE_MS * 2, 5),
+        channel,
+        AUTHOR,
+        MessageDraft {
+            forward: Some(ForwardOrigin {
+                channel_id: id_at(9, 0),
+                message_id: id_at(10, 1),
+                guild_id: Some(Snowflake::new(500)),
+                snapshot: MessageSnapshot {
+                    content: "forwarded <@7>".into(),
+                    attachments: original.attachments.clone(),
+                    embeds: vec![r#"{"title":"t"}"#.into()],
+                    mentions: Mentions {
+                        users: [Snowflake::new(7)].into(),
+                        ..Mentions::default()
+                    },
+                    flags: 0,
+                    created_at_ms: DISCORDY_EPOCH_MS + 3,
+                    edited_at_ms: None,
+                },
+            }),
+            ..MessageDraft::default()
+        },
+        false,
+    )
+    .unwrap();
+    repo.insert(&forwarded).await.unwrap();
+    assert_eq!(repo.find(channel, forwarded.id).await.unwrap(), Some(forwarded.clone()));
+    repo.delete(channel, &[forwarded.id]).await.unwrap();
 
     repo.delete(channel, &[original.id]).await.unwrap();
     assert_eq!(repo.find(channel, original.id).await.unwrap(), None);

@@ -18,6 +18,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0003_attachment_description_flags",
         include_str!("../../../../migrations/0003_attachment_description_flags.cql"),
     ),
+    (
+        "0004_message_forward",
+        include_str!("../../../../migrations/0004_message_forward.cql"),
+    ),
 ];
 
 /// Creates the keyspace when missing (replication factor 1: the platform

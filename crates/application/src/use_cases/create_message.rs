@@ -4,8 +4,8 @@ use std::sync::Arc;
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
-    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, InteractionLink, Message,
-    MessageDraft, MessageId, MessageKind, ReadState, UploadKey, UserId, WebhookAuthor,
+    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, ForwardOrigin, InteractionLink,
+    Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, ReadState, UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
@@ -28,6 +28,13 @@ pub struct AttachmentReference {
     pub flags: u32,
 }
 
+/// The message to forward (message_reference type FORWARD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForwardSource {
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateMessageCommand {
     pub channel_id: ChannelId,
@@ -38,6 +45,8 @@ pub struct CreateMessageCommand {
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
+    /// Forwards another message; `content` is then the optional added comment.
+    pub forward: Option<ForwardSource>,
     /// Discord message flags (internal posts only; `FLAG_EPHEMERAL` relays).
     pub flags: u32,
     /// Set for webhook posts; `author_id` is then the webhook id.
@@ -78,12 +87,15 @@ impl CreateMessage {
     }
 
     pub async fn execute(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
+        if let Some(source) = command.forward {
+            return self.forward(source, command).await;
+        }
         let with_attachments = !command.attachments.is_empty();
         let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
             a.ensure_can_send(with_attachments)
         })
         .await?;
-        self.store(&access, command).await
+        self.store(&access, command, None).await
     }
 
     /// Posts on behalf of a bot, webhook or interaction. api has already
@@ -99,13 +111,91 @@ impl CreateMessage {
         if command.flags & FLAG_EPHEMERAL != 0 {
             return self.relay_ephemeral(&access, command).await;
         }
-        self.store(&access, command).await
+        self.store(&access, command, None).await
     }
 
-    async fn store(&self, access: &ChannelAccess, command: CreateMessageCommand) -> AppResult<MessageView> {
+    /// Forwards a message: the caller needs to read the source and to send in
+    /// the target. The snapshot owns copies of the source's files, so deleting
+    /// the source never breaks the forward. Both ends must be standard-mode;
+    /// ephemeral and P2P chats are re-encrypted by the client.
+    async fn forward(&self, source: ForwardSource, command: CreateMessageCommand) -> AppResult<MessageView> {
+        let source_access = checked_access(&*self.access, source.channel_id, command.author_id, |a| {
+            a.ensure_can_read_history()?;
+            a.ensure_standard_delivery()
+        })
+        .await?;
+        let original = self
+            .messages
+            .find(source.channel_id, source.message_id)
+            .await?
+            .filter(|m| !m.kind.is_system() && m.flags & FLAG_EPHEMERAL == 0)
+            .ok_or_else(|| DomainError::invalid("message_reference", "unknown message"))?;
+        // Forwarding a forward re-forwards the original content.
+        let (channel_id, message_id, guild_id, snapshot) = match &original.forward {
+            Some(origin) => (
+                origin.channel_id,
+                origin.message_id,
+                origin.guild_id,
+                origin.snapshot.clone(),
+            ),
+            None => (
+                original.channel_id,
+                original.id,
+                source_access.guild_id,
+                MessageSnapshot::of(&original, original.attachments.clone()),
+            ),
+        };
+        let with_attachments = !snapshot.attachments.is_empty() || !command.attachments.is_empty();
+        let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
+            a.ensure_can_send(with_attachments)
+        })
+        .await?;
+        // Files live under the channel of the message that owns them.
+        let attachments = self
+            .copy_attachments(original.channel_id, command.channel_id, &snapshot.attachments)
+            .await?;
+        let origin = ForwardOrigin {
+            channel_id,
+            message_id,
+            guild_id,
+            snapshot: MessageSnapshot {
+                attachments,
+                ..snapshot
+            },
+        };
+        self.store(&access, command, Some(origin)).await
+    }
+
+    async fn copy_attachments(
+        &self,
+        from: ChannelId,
+        to: ChannelId,
+        attachments: &[Attachment],
+    ) -> AppResult<Vec<Attachment>> {
+        let mut copies = Vec::with_capacity(attachments.len());
+        for attachment in attachments {
+            let copy = Attachment {
+                id: self.ids.next_id(),
+                ..attachment.clone()
+            };
+            if self.storage.copy(&attachment.key(from), &copy.key(to)).await? {
+                copies.push(copy);
+            } else {
+                tracing::warn!(attachment = %attachment.id, "forwarded attachment is gone from storage");
+            }
+        }
+        Ok(copies)
+    }
+
+    async fn store(
+        &self,
+        access: &ChannelAccess,
+        command: CreateMessageCommand,
+        forward: Option<ForwardOrigin>,
+    ) -> AppResult<MessageView> {
         let channel_id = command.channel_id;
         let nonce = command.nonce.clone();
-        let message = self.compose_message(access, &command).await?;
+        let message = self.compose_message(access, &command, forward).await?;
         self.messages.insert(&message).await?;
         self.record_side_effects(&message).await;
         announce(
@@ -130,7 +220,7 @@ impl CreateMessage {
         if command.target_user_ids.is_empty() {
             return Err(DomainError::invalid("target_user_ids", "required for ephemeral messages").into());
         }
-        let message = self.compose_message(access, &command).await?;
+        let message = self.compose_message(access, &command, None).await?;
         let event = MessageEvent {
             channel_id: command.channel_id,
             guild_id: access.guild_id,
@@ -144,7 +234,12 @@ impl CreateMessage {
         Ok(MessageView::without_reactions(message))
     }
 
-    async fn compose_message(&self, access: &ChannelAccess, command: &CreateMessageCommand) -> AppResult<Message> {
+    async fn compose_message(
+        &self,
+        access: &ChannelAccess,
+        command: &CreateMessageCommand,
+        forward: Option<ForwardOrigin>,
+    ) -> AppResult<Message> {
         if let Some(reply_to) = command.reply_to {
             self.ensure_reply_target_exists(command.channel_id, reply_to).await?;
         }
@@ -161,6 +256,7 @@ impl CreateMessage {
             interaction: command.interaction,
             system_kind: command.system_kind,
             system_target: command.system_target,
+            forward,
         };
         Ok(Message::compose(
             self.ids.next_id(),
@@ -535,5 +631,167 @@ mod tests {
         let bob = h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap();
         assert_eq!(bob.mention_count, 1);
         assert!(h.read_states.find(ALICE, CHANNEL).await.unwrap().is_none());
+    }
+
+    const TARGET: Snowflake = Snowflake::new(2 << 22);
+
+    fn forward_command(source: &Message, comment: &str) -> CreateMessageCommand {
+        CreateMessageCommand {
+            channel_id: TARGET,
+            content: comment.to_owned(),
+            forward: Some(ForwardSource {
+                channel_id: source.channel_id,
+                message_id: source.id,
+            }),
+            ..command("")
+        }
+    }
+
+    #[tokio::test]
+    async fn forwarding_stores_a_snapshot_in_the_target_without_notifying() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "look <@11>").await;
+        let view = CreateMessage::new(&h.ports)
+            .execute(forward_command(&source, "fyi"))
+            .await
+            .unwrap();
+        let stored = h.messages.find(TARGET, view.message.id).await.unwrap().unwrap();
+        assert_eq!(stored.content, "fyi");
+        assert_eq!(stored.author_id, ALICE);
+        let origin = stored.forward.expect("forward origin");
+        assert_eq!((origin.channel_id, origin.message_id), (CHANNEL, source.id));
+        assert_eq!(origin.guild_id, Some(GUILD));
+        assert_eq!(origin.snapshot.content, "look <@11>");
+        assert!(
+            h.read_states.find(BOB, TARGET).await.unwrap().is_none(),
+            "snapshot mentions never ping"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_forward_may_have_no_comment() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "hello").await;
+        let view = CreateMessage::new(&h.ports)
+            .execute(forward_command(&source, ""))
+            .await
+            .unwrap();
+        assert_eq!(view.message.content, "");
+        assert!(view.message.forward.is_some());
+    }
+
+    #[tokio::test]
+    async fn forwarding_copies_attachments_so_the_source_can_go() {
+        let h = Harness::new();
+        let mut source = h.seed(BOB, "pic").await;
+        source.attachments = vec![Attachment {
+            id: Snowflake::new(77),
+            filename: discordy_messages_domain::AttachmentFilename::parse("cat.png").unwrap(),
+            content_type: Some("image/png".into()),
+            size: 5,
+            width: None,
+            height: None,
+            description: None,
+            flags: 0,
+        }];
+        h.messages.insert(&source).await.unwrap();
+        h.storage
+            .put_body(&format!("attachments/{CHANNEL}/77/cat.png"), b"meow!");
+        let view = CreateMessage::new(&h.ports)
+            .execute(forward_command(&source, ""))
+            .await
+            .unwrap();
+        let copy = &view.message.forward.as_ref().unwrap().snapshot.attachments[0];
+        assert_ne!(copy.id, Snowflake::new(77), "the copy has its own id");
+        let key = format!("attachments/{TARGET}/{}/cat.png", copy.id);
+        assert!(h.storage.objects.lock().unwrap().contains_key(&key));
+        assert!(
+            h.storage
+                .objects
+                .lock()
+                .unwrap()
+                .contains_key(&format!("attachments/{CHANNEL}/77/cat.png"))
+        );
+    }
+
+    #[tokio::test]
+    async fn forwarding_needs_attach_files_when_the_source_has_attachments() {
+        let h = Harness::new();
+        let mut source = h.seed(BOB, "pic").await;
+        source.attachments = vec![Attachment {
+            id: Snowflake::new(77),
+            filename: discordy_messages_domain::AttachmentFilename::parse("cat.png").unwrap(),
+            content_type: None,
+            size: 5,
+            width: None,
+            height: None,
+            description: None,
+            flags: 0,
+        }];
+        h.messages.insert(&source).await.unwrap();
+        h.access.set_permissions(
+            Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY | Permissions::SEND_MESSAGES,
+        );
+        let result = CreateMessage::new(&h.ports).execute(forward_command(&source, "")).await;
+        assert_eq!(result, Err(AppError::Domain(DomainError::MissingPermissions)));
+    }
+
+    #[tokio::test]
+    async fn forwarding_needs_read_access_to_the_source() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "secret").await;
+        h.access.deny_channel(CHANNEL);
+        let result = CreateMessage::new(&h.ports).execute(forward_command(&source, "")).await;
+        assert_eq!(result, Err(AppError::Domain(DomainError::MissingAccess)));
+        assert_eq!(h.messages.last_message_id(TARGET).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn forwarding_needs_send_permission_in_the_target() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "x").await;
+        h.access.deny_channel(TARGET);
+        let result = CreateMessage::new(&h.ports).execute(forward_command(&source, "")).await;
+        assert_eq!(result, Err(AppError::Domain(DomainError::MissingAccess)));
+    }
+
+    #[tokio::test]
+    async fn forwarding_from_or_to_non_standard_channels_conflicts() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "x").await;
+        h.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));
+        let result = CreateMessage::new(&h.ports).execute(forward_command(&source, "")).await;
+        assert_eq!(
+            result,
+            Err(AppError::Domain(DomainError::DeliveryModeConflict(
+                DeliveryMode::Ephemeral
+            )))
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_and_system_messages_cannot_be_forwarded() {
+        let h = Harness::new();
+        let mut ghost = h.seed(BOB, "x").await;
+        ghost.id = Snowflake::new(999);
+        let result = CreateMessage::new(&h.ports).execute(forward_command(&ghost, "")).await;
+        assert!(matches!(result, Err(AppError::Domain(DomainError::InvalidForm(_)))));
+    }
+
+    #[tokio::test]
+    async fn forwarding_a_forward_keeps_the_original_reference() {
+        let h = Harness::new();
+        let source = h.seed(BOB, "orig").await;
+        let first = CreateMessage::new(&h.ports)
+            .execute(forward_command(&source, ""))
+            .await
+            .unwrap();
+        let mut again = forward_command(&first.message, "");
+        again.channel_id = CHANNEL;
+        // The first forward lives in TARGET, which the fake answers like any channel.
+        let second = CreateMessage::new(&h.ports).execute(again).await.unwrap();
+        let origin = second.message.forward.unwrap();
+        assert_eq!((origin.channel_id, origin.message_id), (CHANNEL, source.id));
+        assert_eq!(origin.snapshot.content, "orig");
     }
 }

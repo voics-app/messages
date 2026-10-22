@@ -63,7 +63,30 @@ async fn presigned_uploads_can_be_stat_ed_and_deleted() {
     assert_eq!(ranged.status, 206);
     assert_eq!(ranged.content_range.as_deref(), Some("bytes 2-3/4"));
 
+    let copy = UploadKey::new(
+        Snowflake::new(9),
+        Snowflake::new(10),
+        AttachmentFilename::parse("cat.txt").unwrap(),
+    );
+    assert!(storage.copy(&key, &copy).await.unwrap());
+    let copied = storage.stat(&copy).await.unwrap().expect("copied object");
+    assert_eq!((copied.size, copied.content_type.as_deref()), (4, Some("text/plain")));
+    let missing = UploadKey::new(
+        Snowflake::new(9),
+        Snowflake::new(11),
+        AttachmentFilename::parse("x.txt").unwrap(),
+    );
+    assert!(
+        !storage.copy(&missing, &copy).await.unwrap(),
+        "a missing source copies nothing"
+    );
+
     storage.delete(&key).await.unwrap();
+    assert!(
+        storage.stat(&copy).await.unwrap().is_some(),
+        "the copy outlives the source"
+    );
+    storage.delete(&copy).await.unwrap();
     assert_eq!(storage.stat(&key).await.unwrap(), None);
     assert!(storage.open(&key, None).await.unwrap().is_none());
     storage.delete(&key).await.expect("deleting a missing object is fine");
