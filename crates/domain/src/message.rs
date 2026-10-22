@@ -2,6 +2,7 @@
 
 use crate::attachment::{Attachment, MAX_ATTACHMENTS_PER_MESSAGE};
 use crate::error::{DomainError, FieldError};
+use crate::forward::ForwardOrigin;
 use crate::mentions::Mentions;
 use crate::message_origin::{FLAG_SUPPRESS_EMBEDS, InteractionLink, WebhookAuthor};
 use crate::{ChannelId, MessageId, UserId};
@@ -74,6 +75,8 @@ pub struct MessageDraft {
     pub system_kind: Option<MessageKind>,
     /// The user a recipient add/remove message is about.
     pub system_target: Option<UserId>,
+    /// Set when forwarding another message.
+    pub forward: Option<ForwardOrigin>,
 }
 
 /// A partial update; `None` leaves the field unchanged.
@@ -111,6 +114,8 @@ pub struct Message {
     pub reply_to: Option<MessageId>,
     pub webhook: Option<WebhookAuthor>,
     pub interaction: Option<InteractionLink>,
+    /// Present on forwarded messages (message_reference type FORWARD).
+    pub forward: Option<ForwardOrigin>,
     pub flags: u32,
     pub edited_at_ms: Option<u64>,
     pub pinned: bool,
@@ -151,6 +156,7 @@ impl Message {
             flags: draft.flags,
             webhook: draft.webhook,
             interaction: draft.interaction,
+            forward: draft.forward,
             edited_at_ms: None,
             pinned: false,
         };
@@ -221,7 +227,8 @@ impl Message {
         let is_empty = !self.kind.is_system()
             && self.content.trim().is_empty()
             && self.attachments.is_empty()
-            && self.embeds.is_empty();
+            && self.embeds.is_empty()
+            && self.forward.is_none();
         if is_empty {
             reject("content", "cannot send an empty message");
         }
@@ -291,6 +298,28 @@ mod tests {
         let mut d = draft("yes");
         d.reply_to = Some(Snowflake::new(50));
         assert_eq!(compose(d).unwrap().kind, MessageKind::Reply);
+    }
+
+    #[test]
+    fn a_forward_without_a_comment_is_not_empty() {
+        let mut d = draft("");
+        d.forward = Some(ForwardOrigin {
+            channel_id: Snowflake::new(2),
+            message_id: Snowflake::new(3),
+            guild_id: None,
+            snapshot: crate::MessageSnapshot {
+                content: "orig".into(),
+                attachments: vec![],
+                embeds: vec![],
+                mentions: Mentions::default(),
+                flags: 0,
+                created_at_ms: 1,
+                edited_at_ms: None,
+            },
+        });
+        let message = compose(d).unwrap();
+        assert_eq!(message.kind, MessageKind::Default);
+        assert!(message.forward.is_some());
     }
 
     #[test]

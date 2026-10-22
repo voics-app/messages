@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 
 use discordy_messages_domain::{
-    Attachment, AttachmentFilename, Bucket, InteractionLink, Mentions, Message, MessageKind, ReadState, Snowflake,
-    WebhookAuthor,
+    Attachment, AttachmentFilename, Bucket, ForwardOrigin, InteractionLink, Mentions, Message, MessageKind,
+    MessageSnapshot, ReadState, Snowflake, WebhookAuthor,
 };
 use scylla::value::CqlTimestamp;
 use scylla::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
@@ -56,15 +56,20 @@ pub(crate) struct MessageRow {
     webhook_avatar_url: Option<String>,
     interaction_id: Option<i64>,
     application_id: Option<i64>,
+    forward_channel_id: Option<i64>,
+    forward_message_id: Option<i64>,
+    forward_guild_id: Option<i64>,
+    forward_snapshot: Option<String>,
 }
 
 /// The column list matching [`MessageRow`], for SELECT and INSERT.
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
-     webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id";
+     webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
+     forward_message_id, forward_guild_id, forward_snapshot";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 21;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 25;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -90,6 +95,10 @@ impl MessageRow {
             webhook_avatar_url: message.webhook.as_ref().and_then(|w| w.avatar_url.clone()),
             interaction_id: message.interaction.map(|i| id(i.interaction_id)),
             application_id: message.interaction.map(|i| id(i.application_id)),
+            forward_channel_id: message.forward.as_ref().map(|f| id(f.channel_id)),
+            forward_message_id: message.forward.as_ref().map(|f| id(f.message_id)),
+            forward_guild_id: message.forward.as_ref().and_then(|f| f.guild_id.map(id)),
+            forward_snapshot: message.forward.as_ref().map(|f| snapshot_json(&f.snapshot)),
         }
     }
 
@@ -130,6 +139,17 @@ impl MessageRow {
                     interaction_id: snowflake(interaction),
                     application_id: snowflake(application),
                 }),
+                _ => None,
+            },
+            forward: match (self.forward_channel_id, self.forward_message_id, self.forward_snapshot) {
+                (Some(channel), Some(message), Some(snapshot)) => {
+                    snapshot_from_json(&snapshot).map(|snapshot| ForwardOrigin {
+                        channel_id: snowflake(channel),
+                        message_id: snowflake(message),
+                        guild_id: self.forward_guild_id.map(snowflake),
+                        snapshot,
+                    })
+                }
                 _ => None,
             },
         })
@@ -178,6 +198,91 @@ fn attachment_from_udt(udt: AttachmentUdt) -> Option<Attachment> {
         height: udt.height.map(|h| h as u32),
         description: udt.description,
         flags: udt.flags.unwrap_or(0).max(0) as u32,
+    })
+}
+
+/// The snapshot is stored as one JSON document: it is only ever read and
+/// written together with its message.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SnapshotJson {
+    content: String,
+    attachments: Vec<AttachmentJson>,
+    embeds: Vec<String>,
+    users: Vec<u64>,
+    roles: Vec<u64>,
+    flags: u32,
+    created_at_ms: u64,
+    edited_at_ms: Option<u64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AttachmentJson {
+    id: u64,
+    filename: String,
+    content_type: Option<String>,
+    size: u64,
+    width: Option<u32>,
+    height: Option<u32>,
+    description: Option<String>,
+    flags: u32,
+}
+
+fn snapshot_json(snapshot: &MessageSnapshot) -> String {
+    let document = SnapshotJson {
+        content: snapshot.content.clone(),
+        attachments: snapshot
+            .attachments
+            .iter()
+            .map(|a| AttachmentJson {
+                id: a.id.value(),
+                filename: a.filename.as_str().to_owned(),
+                content_type: a.content_type.clone(),
+                size: a.size,
+                width: a.width,
+                height: a.height,
+                description: a.description.clone(),
+                flags: a.flags,
+            })
+            .collect(),
+        embeds: snapshot.embeds.clone(),
+        users: snapshot.mentions.users.iter().map(|u| u.value()).collect(),
+        roles: snapshot.mentions.roles.iter().map(|r| r.value()).collect(),
+        flags: snapshot.flags,
+        created_at_ms: snapshot.created_at_ms,
+        edited_at_ms: snapshot.edited_at_ms,
+    };
+    serde_json::to_string(&document).unwrap_or_default()
+}
+
+fn snapshot_from_json(raw: &str) -> Option<MessageSnapshot> {
+    let document: SnapshotJson = serde_json::from_str(raw).ok()?;
+    Some(MessageSnapshot {
+        content: document.content,
+        attachments: document
+            .attachments
+            .into_iter()
+            .filter_map(|a| {
+                Some(Attachment {
+                    id: Snowflake::new(a.id),
+                    filename: AttachmentFilename::parse(&a.filename).ok()?,
+                    content_type: a.content_type,
+                    size: a.size,
+                    width: a.width,
+                    height: a.height,
+                    description: a.description,
+                    flags: a.flags,
+                })
+            })
+            .collect(),
+        embeds: document.embeds,
+        mentions: Mentions {
+            users: document.users.into_iter().map(Snowflake::new).collect(),
+            roles: document.roles.into_iter().map(Snowflake::new).collect(),
+            everyone: false,
+        },
+        flags: document.flags,
+        created_at_ms: document.created_at_ms,
+        edited_at_ms: document.edited_at_ms,
     })
 }
 
@@ -264,6 +369,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(MessageRow::from_message(&message).into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn forwarded_messages_round_trip_through_rows() {
+        let snapshot = MessageSnapshot {
+            content: "original <@7>".into(),
+            attachments: vec![Attachment {
+                id: Snowflake::new(31),
+                filename: AttachmentFilename::parse("cat.png").unwrap(),
+                content_type: Some("image/png".into()),
+                size: 10,
+                width: Some(4),
+                height: Some(5),
+                description: Some("alt".into()),
+                flags: 8,
+            }],
+            embeds: vec![r#"{"title":"t"}"#.into()],
+            mentions: Mentions {
+                users: [Snowflake::new(7)].into(),
+                roles: [Snowflake::new(8)].into(),
+                everyone: false,
+            },
+            flags: 4,
+            created_at_ms: 1_700_000_000_000,
+            edited_at_ms: Some(1_700_000_001_000),
+        };
+        let draft = MessageDraft {
+            forward: Some(ForwardOrigin {
+                channel_id: Snowflake::new(2),
+                message_id: Snowflake::new(3),
+                guild_id: Some(Snowflake::new(4)),
+                snapshot,
+            }),
+            ..MessageDraft::default()
+        };
+        let message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            draft,
+            false,
+        )
+        .unwrap();
+        let row = MessageRow::from_message(&message);
+        assert_eq!(row.forward_channel_id, Some(2));
+        assert_eq!(row.into_message().unwrap(), message);
     }
 
     #[test]

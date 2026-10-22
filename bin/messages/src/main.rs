@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use config::{Config, Environment};
 use discordy_messages_application::ports::{BackfillState, SearchIndex};
-use discordy_messages_application::use_cases::MessagingPorts;
+use discordy_messages_application::use_cases::{MessagingPorts, PurgeAuthorMessages};
 use discordy_messages_application::{HistoryReader, PortError};
 use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
+use discordy_messages_infrastructure::ban_purge;
 use discordy_messages_infrastructure::kafka::KafkaEventSink;
 use discordy_messages_infrastructure::scylla::{
     self, ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
@@ -155,6 +156,13 @@ async fn run(config: Config) -> Result<(), StartupError> {
         ));
     }
 
+    // Ban "delete message history": the api asks for the purge through the guild topic.
+    tokio::spawn(run_ban_purge(
+        Arc::new(PurgeAuthorMessages::new(&ports)),
+        ports.search.clone(),
+        config.kafka_brokers.clone(),
+    ));
+
     let cors = cors::layer(&config.cors_allowed_origins)?;
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, worker = config.worker.value(), "messages service listening");
@@ -217,5 +225,13 @@ async fn shutdown_signal() {
     tokio::select! {
         () = interrupt => {},
         () = terminate => {},
+    }
+}
+
+/// Starts the BAN_MESSAGE_PURGE consumer, retrying until the bus is reachable.
+async fn run_ban_purge(purger: Arc<PurgeAuthorMessages>, offsets: Arc<dyn SearchIndex>, brokers: Vec<String>) {
+    while let Err(error) = ban_purge::spawn(brokers.clone(), purger.clone(), offsets.clone()).await {
+        tracing::warn!(%error, "ban purge consumer could not start, retrying");
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 }

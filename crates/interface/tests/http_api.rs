@@ -1013,3 +1013,123 @@ async fn the_media_proxy_refuses_unsigned_tampered_and_forbidden_requests() {
     let (status, _, _) = fetch(&app, signed_missing.strip_prefix("http://cdn/cdn").unwrap(), None).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
+
+#[tokio::test]
+async fn reaction_users_can_be_listed_and_moderated() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+    let message = harness.seed(BOB, "react to me").await;
+    let app = app(&harness);
+    let base = format!("{}/{}/reactions/%F0%9F%91%8D", messages_uri(), message.id);
+
+    let (status, _) = call(&app, Method::PUT, &format!("{base}/@me"), Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, users) = call(&app, Method::GET, &base, Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(users.as_array().unwrap().len(), 1);
+
+    let (status, _) = call(
+        &app,
+        Method::DELETE,
+        &format!("{base}/{}", BOB),
+        Some(ALICE_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(&app, Method::DELETE, &base, Some(ALICE_TOKEN), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, users) = call(&app, Method::GET, &base, Some(ALICE_TOKEN), None).await;
+    assert!(users.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn forwarding_sends_a_snapshot_with_a_forward_reference_and_downloadable_copies() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let original = post_with_attachment(&harness, &app).await;
+    assert!(original.contains("/77/"));
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    let source_id = history[0]["id"].as_str().unwrap().to_owned();
+    let target = discordy_messages_domain::Snowflake::new(2 << 22);
+
+    let (status, forwarded) = call(
+        &app,
+        Method::POST,
+        &format!("/api/v1/channels/{target}/messages"),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "fyi", "message_reference": {
+            "type": 1, "message_id": source_id, "channel_id": CHANNEL.to_string()}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{forwarded}");
+    assert_eq!(forwarded["content"], "fyi");
+    assert_eq!(forwarded["type"], 0);
+    assert_eq!(forwarded["message_reference"]["type"], 1);
+    assert_eq!(forwarded["message_reference"]["channel_id"], CHANNEL.to_string());
+    assert_eq!(forwarded["message_reference"]["message_id"], source_id);
+    let snapshot = &forwarded["message_snapshots"][0]["message"];
+    assert_eq!(snapshot["content"], "look");
+    let url = snapshot["attachments"][0]["url"].as_str().unwrap();
+    assert!(url.contains(&format!("/attachments/{target}/")), "{url}");
+    let (status, _, body) = fetch(&app, url.strip_prefix(CDN_PREFIX).unwrap(), None).await;
+    assert_eq!((status, body), (StatusCode::OK, b"meow-meow".to_vec()));
+
+    // The snapshot survives in history and a plain message has no snapshot field.
+    let (_, history) = call(
+        &app,
+        Method::GET,
+        &format!("/api/v1/channels/{target}/messages"),
+        Some(ALICE_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(history[0]["message_snapshots"][0]["message"]["content"], "look");
+    let (_, source) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert!(source[0].get("message_snapshots").is_none());
+}
+
+#[tokio::test]
+async fn forwarding_validates_the_reference_and_permissions() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let uri = messages_uri();
+    let (_, source) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "x"})),
+    )
+    .await;
+    let id = source["id"].as_str().unwrap();
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"message_reference": {"type": 1, "message_id": id}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a forward needs its source channel");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"message_reference": {"type": 7, "message_id": id, "channel_id": CHANNEL.to_string()}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    harness.access.set(Ok(dm_access(DeliveryMode::P2p)));
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"message_reference": {"type": 1, "message_id": id, "channel_id": CHANNEL.to_string()}})),
+    )
+    .await;
+    assert_eq!((status, body["code"].as_u64()), (StatusCode::CONFLICT, Some(50160)));
+}
