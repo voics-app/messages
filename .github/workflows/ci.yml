@@ -21,8 +21,9 @@ jobs:
     uses: discordy-voics/.github/.github/workflows/gitflow-guard.yml@main
 
   rust:
-    uses: discordy-voics/.github/.github/workflows/rust.yml@main
+    uses: discordy-voics/.github/.github/workflows/rust.yml@feature/59-ci-cache
     with:
+      runs-on: vm-ci2
       image-name: messages
       description: Discordy messages service
       # RUSTSEC-2023-0071 (rsa Marvin attack) has no fixed release; messages never performs RSA decryption.
@@ -36,7 +37,9 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: discordy-voics/.github/.github/workflows/docker.yml@main
+    uses: discordy-voics/.github/.github/workflows/docker.yml@feature/59-ci-cache
     with:
+      runs-on: vm-ci2
+      push: false
       image-name: messages
       description: Discordy messages service
