@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use testcontainers::core::wait::LogWaitStrategy;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
@@ -159,8 +160,10 @@ pub struct Postgres {
 pub async fn start_postgres() -> Postgres {
     let container = GenericImage::new(POSTGRES_IMAGE.0, POSTGRES_IMAGE.1)
         .with_exposed_port(5432.tcp())
-        .with_wait_for(WaitFor::message_on_either_std(
-            "database system is ready to accept connections",
+        // The image starts a temporary server to initialise, stops it and starts the real one: wait for the
+        // second "ready" (a fixed sleep raced the restart on slow runners: "Connection reset by peer").
+        .with_wait_for(WaitFor::Log(
+            LogWaitStrategy::stdout_or_stderr("database system is ready to accept connections").with_times(2),
         ))
         .with_env_var("POSTGRES_PASSWORD", "messages-it")
         .with_env_var("POSTGRES_DB", "search")
@@ -169,8 +172,6 @@ pub async fn start_postgres() -> Postgres {
         .start()
         .await
         .expect("start postgres");
-    // The image restarts the server once after initialising; wait for that second start.
-    tokio::time::sleep(Duration::from_secs(4)).await;
     let port = container.get_host_port_ipv4(5432.tcp()).await.expect("postgres port");
     Postgres {
         container,
