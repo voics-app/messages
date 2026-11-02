@@ -21,6 +21,9 @@ jobs:
     uses: discordy-voics/.github/.github/workflows/gitflow-guard.yml@main
 
   rust:
+    permissions:
+      contents: read
+      actions: read   # shared workflow: tag builds look up the main run of this commit
     uses: discordy-voics/.github/.github/workflows/rust.yml@main
     with:
       image-name: messages
