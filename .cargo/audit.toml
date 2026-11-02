@@ -1,0 +1,8 @@
+# cargo audit reads this file. Each ignore names why it is safe and when it goes away.
+[advisories]
+ignore = [
+  # crypto-bigint 0.5.5 timing variability, via jsonwebtoken rust_crypto -> p256/p384 -> elliptic-curve 0.13.
+  # Only EdDSA tokens are signed/verified, so the affected ECDSA code never runs. Remove when jsonwebtoken
+  # moves to elliptic-curve 0.14 (crypto-bigint >= 0.7.6): discordy-voics/api#79.
+  "RUSTSEC-2026-0387",
+]
