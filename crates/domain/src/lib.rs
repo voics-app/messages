@@ -29,7 +29,9 @@ pub use forward::{ForwardOrigin, MessageSnapshot};
 pub use link::{MAX_UNFURLED_LINKS, extract_links, is_player_iframe_host};
 pub use mentions::Mentions;
 pub use message::{Message, MessageDraft, MessageEdit, MessageKind};
-pub use message_origin::{FLAG_EPHEMERAL, FLAG_SUPPRESS_EMBEDS, InteractionLink, WebhookAuthor};
+pub use message_origin::{
+    FLAG_EPHEMERAL, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, InteractionLink, WebhookAuthor,
+};
 pub use paging::{HistoryCursor, PageLimit, Scan, ScanDirection};
 pub use permissions::Permissions;
 pub use reaction::{Emoji, ReactionCount, ReactionRow};

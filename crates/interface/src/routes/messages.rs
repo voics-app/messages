@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, ForwardSource};
-use discordy_messages_domain::{HistoryCursor, MessageEdit, PageLimit};
+use discordy_messages_domain::{FLAG_SUPPRESS_NOTIFICATIONS, HistoryCursor, MessageEdit, PageLimit};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -119,8 +119,9 @@ pub async fn create(
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,
+        suppress_reply_ping: body.allowed_mentions.and_then(|m| m.replied_user) == Some(false),
         forward,
-        flags: 0,
+        flags: body.flags.unwrap_or(0) & FLAG_SUPPRESS_NOTIFICATIONS,
         webhook: None,
         interaction: None,
         target_user_ids: Vec::new(),
