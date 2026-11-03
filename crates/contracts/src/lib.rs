@@ -122,6 +122,10 @@ pub struct MessageDto {
     pub edited_timestamp: Option<String>,
     pub tts: bool,
     pub mention_everyone: bool,
+    /// Extension: with `mention_everyone`, set when the message is `@here`
+    /// (notify only members who are online at send time).
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub mention_here: bool,
     pub mentions: Vec<UserRef>,
     pub mention_roles: Vec<String>,
     pub attachments: Vec<AttachmentDto>,

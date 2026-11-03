@@ -688,6 +688,20 @@ mod tests {
         assert!(h.read_states.find(ALICE, CHANNEL).await.unwrap().is_none());
     }
 
+    #[tokio::test]
+    async fn here_is_flagged_on_the_event_so_delivery_can_filter_by_presence() {
+        let h = Harness::new();
+        h.access.set_permissions(MEMBER | Permissions::MENTION_EVERYONE);
+        let use_case = CreateMessage::new(&h.ports);
+        let here = use_case.execute(command("@here standup")).await.unwrap().message;
+        let everyone = use_case.execute(command("@everyone standup")).await.unwrap().message;
+        assert!(here.mentions.everyone && here.mentions.here);
+        assert!(everyone.mentions.everyone && !everyone.mentions.here);
+        let stored = h.messages.find(CHANNEL, here.id).await.unwrap().unwrap();
+        assert!(stored.mentions.here);
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
+    }
+
     const TARGET: Snowflake = Snowflake::new(2 << 22);
 
     fn forward_command(source: &Message, comment: &str) -> CreateMessageCommand {

@@ -47,6 +47,7 @@ pub(crate) struct MessageRow {
     mentions: Option<Vec<i64>>,
     mention_roles: Option<Vec<i64>>,
     mention_everyone: Option<bool>,
+    mention_here: Option<bool>,
     reply_to: Option<i64>,
     flags: Option<i32>,
     edited_at: Option<CqlTimestamp>,
@@ -69,10 +70,10 @@ pub(crate) struct MessageRow {
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id,      mention_here";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 28;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 29;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -89,6 +90,7 @@ impl MessageRow {
             mentions: Some(message.mentions.users.iter().copied().map(id).collect()),
             mention_roles: Some(message.mentions.roles.iter().copied().map(id).collect()),
             mention_everyone: Some(message.mentions.everyone),
+            mention_here: Some(message.mentions.here),
             reply_to: message.reply_to.map(id),
             flags: Some(message.flags as i32),
             edited_at: message.edited_at_ms.map(|ms| CqlTimestamp(ms as i64)),
@@ -147,6 +149,7 @@ impl MessageRow {
                 users: to_ids(self.mentions),
                 roles: to_ids(self.mention_roles),
                 everyone: self.mention_everyone.unwrap_or(false),
+                here: self.mention_here.unwrap_or(false),
             },
             reply_to: self.reply_to.map(snowflake),
             flags: self.flags.unwrap_or(0) as u32,
@@ -304,6 +307,7 @@ fn snapshot_from_json(raw: &str) -> Option<MessageSnapshot> {
             users: document.users.into_iter().map(Snowflake::new).collect(),
             roles: document.roles.into_iter().map(Snowflake::new).collect(),
             everyone: false,
+            here: false,
         },
         flags: document.flags,
         created_at_ms: document.created_at_ms,
@@ -415,6 +419,7 @@ mod tests {
                 users: [Snowflake::new(7)].into(),
                 roles: [Snowflake::new(8)].into(),
                 everyone: false,
+                here: false,
             },
             flags: 4,
             created_at_ms: 1_700_000_000_000,
@@ -440,6 +445,23 @@ mod tests {
         let row = MessageRow::from_message(&message);
         assert_eq!(row.forward_channel_id, Some(2));
         assert_eq!(row.into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn here_mentions_round_trip_through_rows() {
+        let message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            MessageDraft {
+                content: "@here hi".into(),
+                ..MessageDraft::default()
+            },
+            true,
+        )
+        .unwrap();
+        assert!(message.mentions.here);
+        assert_eq!(MessageRow::from_message(&message).into_message().unwrap(), message);
     }
 
     #[test]

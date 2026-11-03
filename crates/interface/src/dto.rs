@@ -158,6 +158,7 @@ pub fn message_dto(
         edited_timestamp: message.edited_at_ms.map(rfc3339),
         tts: false,
         mention_everyone: message.mentions.everyone,
+        mention_here: message.mentions.here,
         mentions: message
             .mentions
             .users
@@ -345,6 +346,29 @@ mod tests {
         assert_eq!(ended.participants, ["6", "7"]);
         assert_eq!(parse_rfc3339("2026-01-01T00:00:00.123Z"), Some(1_767_225_600_123));
         assert_eq!(parse_rfc3339("nope"), None);
+    }
+
+    #[test]
+    fn here_is_flagged_next_to_mention_everyone() {
+        let dto_for = |content: &str| {
+            let message = Message::compose(
+                Snowflake::new(1 << 22),
+                Snowflake::new(5),
+                Snowflake::new(6),
+                MessageDraft {
+                    content: content.into(),
+                    ..MessageDraft::default()
+                },
+                true,
+            )
+            .unwrap();
+            message_dto(&message, &[], None, None, &urls(), &Authors::new())
+        };
+        let here = dto_for("@here standup");
+        assert!(here.mention_everyone && here.mention_here);
+        let everyone = dto_for("@everyone standup");
+        assert!(everyone.mention_everyone && !everyone.mention_here);
+        assert!(serde_json::to_value(&everyone).unwrap().get("mention_here").is_none());
     }
 
     #[test]
