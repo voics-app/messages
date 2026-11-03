@@ -124,9 +124,7 @@ pub async fn create(
         flags: body.flags.unwrap_or(0) & FLAG_SUPPRESS_NOTIFICATIONS,
         webhook: None,
         interaction: None,
-        target_user_ids: Vec::new(),
-        system_kind: None,
-        system_target: None,
+        ..CreateMessageCommand::default()
     };
     let view = state.use_cases.create_message.execute(command).await?;
     Ok(Json(single(&state, &view).await))

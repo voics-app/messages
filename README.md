@@ -12,13 +12,16 @@ Public, under `/api/v1` (Bearer JWT or Bot token):
 `POST /channels/{id}/messages/bulk-delete`, `POST /channels/{id}/messages/{mid}/ack`,
 `DELETE /channels/{id}/messages/{mid}/reactions`,
 `PUT|DELETE /channels/{id}/messages/{mid}/reactions/{emoji}/@me`,
-`GET /channels/{id}/pins`, `PUT|DELETE /channels/{id}/pins/{mid}`,
+`GET /channels/{id}/pins`, `PUT|DELETE /channels/{id}/pins/{mid}` (pinning also posts the type 6 system message),
 `POST /channels/{id}/attachments`.
 
 Internal, under `/internal/v1` (header `X-Internal-Token`):
 `POST /channels/{id}/messages` (bot, webhook and interaction messages; body `author_id`, `content`,
 `embeds`, `components`; skips the user permission check, still refuses non-standard channels with 409
-code 50160), `GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
+code 50160; `type` posts a system message: 1-2 and 4-5 group DM events, 3 call with `call`
+`{participants, ended_timestamp}`, 6 pin, 7 member join, 18 thread created with `thread_id`),
+`PATCH /channels/{id}/messages/{mid}/call` (records `ended_timestamp` and final `participants` of a
+call message), `GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
 
 Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`.
 

@@ -24,6 +24,14 @@ pub enum MessageKind {
     ChannelNameChange,
     /// Group DM: icon changed.
     ChannelIconChange,
+    /// DM or group DM: a call started (see [`Call`]).
+    Call,
+    /// A message was pinned (`reply_to` is the pinned message).
+    ChannelPinnedMessage,
+    /// A member joined the guild (rendered with a greeting picked from the id).
+    GuildMemberJoin,
+    /// A thread was created (`thread_id` is the thread, content its name).
+    ThreadCreated,
     Reply,
 }
 
@@ -35,6 +43,10 @@ impl MessageKind {
             Self::RecipientRemove => 2,
             Self::ChannelNameChange => 4,
             Self::ChannelIconChange => 5,
+            Self::Call => 3,
+            Self::ChannelPinnedMessage => 6,
+            Self::GuildMemberJoin => 7,
+            Self::ThreadCreated => 18,
             Self::Reply => 19,
         }
     }
@@ -43,6 +55,10 @@ impl MessageKind {
         match code {
             1 => Self::RecipientAdd,
             2 => Self::RecipientRemove,
+            3 => Self::Call,
+            6 => Self::ChannelPinnedMessage,
+            7 => Self::GuildMemberJoin,
+            18 => Self::ThreadCreated,
             4 => Self::ChannelNameChange,
             5 => Self::ChannelIconChange,
             19 => Self::Reply,
@@ -54,8 +70,34 @@ impl MessageKind {
     pub const fn is_system(self) -> bool {
         matches!(
             self,
-            Self::RecipientAdd | Self::RecipientRemove | Self::ChannelNameChange | Self::ChannelIconChange
+            Self::RecipientAdd
+                | Self::RecipientRemove
+                | Self::ChannelNameChange
+                | Self::ChannelIconChange
+                | Self::Call
+                | Self::ChannelPinnedMessage
+                | Self::GuildMemberJoin
+                | Self::ThreadCreated
         )
+    }
+}
+
+/// The payload of a call system message (type 3).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Call {
+    pub participants: Vec<UserId>,
+    /// Unset while the call is running.
+    pub ended_at_ms: Option<u64>,
+}
+
+impl Call {
+    /// The call a type 3 message starts with: the caller is always a participant.
+    fn starting(call: Option<Self>, caller: UserId) -> Self {
+        let mut call = call.unwrap_or_default();
+        if call.participants.is_empty() {
+            call.participants.push(caller);
+        }
+        call
     }
 }
 
@@ -78,6 +120,10 @@ pub struct MessageDraft {
     pub system_kind: Option<MessageKind>,
     /// The user a recipient add/remove message is about.
     pub system_target: Option<UserId>,
+    /// The call a type 3 message reports.
+    pub call: Option<Call>,
+    /// The thread a type 18 message announces.
+    pub thread_id: Option<ChannelId>,
     /// Set when forwarding another message.
     pub forward: Option<ForwardOrigin>,
 }
@@ -119,6 +165,10 @@ pub struct Message {
     pub interaction: Option<InteractionLink>,
     /// Present on forwarded messages (message_reference type FORWARD).
     pub forward: Option<ForwardOrigin>,
+    /// Present on call messages (type 3).
+    pub call: Option<Call>,
+    /// Present on thread created messages (type 18).
+    pub thread_id: Option<ChannelId>,
     pub flags: u32,
     pub edited_at_ms: Option<u64>,
     pub pinned: bool,
@@ -163,6 +213,8 @@ impl Message {
             webhook: draft.webhook,
             interaction: draft.interaction,
             forward: draft.forward,
+            call: (kind == MessageKind::Call).then(|| Call::starting(draft.call, author_id)),
+            thread_id: draft.thread_id.filter(|_| kind == MessageKind::ThreadCreated),
             edited_at_ms: None,
             pinned: false,
         };
@@ -192,6 +244,26 @@ impl Message {
         edited.validate()?;
         edited.edited_at_ms = Some(now_unix_ms);
         *self = edited;
+        Ok(())
+    }
+
+    /// Records how a call went: when it ended and who took part. Only call
+    /// messages carry a call.
+    pub fn update_call(
+        &mut self,
+        ended_at_ms: Option<u64>,
+        participants: Option<Vec<UserId>>,
+    ) -> Result<(), DomainError> {
+        let call = self
+            .call
+            .as_mut()
+            .ok_or_else(|| DomainError::invalid("message_id", "not a call message"))?;
+        if let Some(participants) = participants {
+            call.participants = participants;
+        }
+        if ended_at_ms.is_some() {
+            call.ended_at_ms = ended_at_ms;
+        }
         Ok(())
     }
 
@@ -229,6 +301,9 @@ impl Message {
         }
         if self.embeds.len() > MAX_EMBEDS {
             reject("embeds", "must be 10 or fewer");
+        }
+        if self.kind == MessageKind::ThreadCreated && self.thread_id.is_none() {
+            reject("thread_id", "required for thread created messages");
         }
         let is_empty = !self.kind.is_system()
             && self.content.trim().is_empty()
@@ -289,6 +364,81 @@ mod tests {
         assert_eq!(message.kind.code(), 1);
         assert!(message.mentions.users.contains(&Snowflake::new(9)));
         assert!(compose(MessageDraft::default()).is_err());
+    }
+
+    #[test]
+    fn composes_the_new_system_kinds() {
+        for code in [3, 6, 7, 18] {
+            assert!(MessageKind::from_code(code).is_system());
+            assert_eq!(MessageKind::from_code(code).code(), code);
+        }
+        let pin = compose(MessageDraft {
+            system_kind: Some(MessageKind::ChannelPinnedMessage),
+            reply_to: Some(Snowflake::new(50)),
+            ..MessageDraft::default()
+        })
+        .unwrap();
+        assert_eq!(pin.reply_to, Some(Snowflake::new(50)));
+        assert!(pin.mentions.users.is_empty());
+        assert!(
+            compose(MessageDraft {
+                system_kind: Some(MessageKind::GuildMemberJoin),
+                ..MessageDraft::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_call_message_always_lists_its_caller() {
+        let call = compose(MessageDraft {
+            system_kind: Some(MessageKind::Call),
+            ..MessageDraft::default()
+        })
+        .unwrap()
+        .call
+        .unwrap();
+        assert_eq!(call.participants, vec![AUTHOR]);
+        assert_eq!(call.ended_at_ms, None);
+    }
+
+    #[test]
+    fn updating_a_call_sets_the_end_and_participants() {
+        let mut call = compose(MessageDraft {
+            system_kind: Some(MessageKind::Call),
+            ..MessageDraft::default()
+        })
+        .unwrap();
+        call.update_call(Some(9_000), Some(vec![AUTHOR, Snowflake::new(6)]))
+            .unwrap();
+        assert_eq!(call.call.as_ref().unwrap().ended_at_ms, Some(9_000));
+        assert_eq!(call.call.unwrap().participants.len(), 2);
+        let mut text = compose(draft("hi")).unwrap();
+        assert!(text.update_call(Some(1), None).is_err());
+    }
+
+    #[test]
+    fn call_and_thread_payloads_belong_to_their_kind_only() {
+        let plain = compose(MessageDraft {
+            content: "hi".into(),
+            call: Some(Call::default()),
+            thread_id: Some(Snowflake::new(8)),
+            ..MessageDraft::default()
+        })
+        .unwrap();
+        assert_eq!((plain.call, plain.thread_id), (None, None));
+        let thread = MessageDraft {
+            system_kind: Some(MessageKind::ThreadCreated),
+            content: "plans".into(),
+            ..MessageDraft::default()
+        };
+        assert!(compose(thread.clone()).is_err());
+        let thread = compose(MessageDraft {
+            thread_id: Some(Snowflake::new(8)),
+            ..thread
+        })
+        .unwrap();
+        assert_eq!(thread.thread_id, Some(Snowflake::new(8)));
     }
 
     #[test]

@@ -23,6 +23,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../../migrations/0004_message_forward.cql"),
     ),
     (
+        "0005_system_message_payloads",
+        include_str!("../../../../migrations/0005_system_message_payloads.cql"),
+    ),
+    (
         "0006_mention_here",
         include_str!("../../../../migrations/0006_mention_here.cql"),
     ),

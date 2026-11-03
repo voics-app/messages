@@ -140,6 +140,9 @@ pub struct MessageDto {
     pub flags: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_reference: Option<MessageReferenceDto>,
+    /// Call messages (type 3): who took part and when the call ended.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub call: Option<CallDto>,
     pub components: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub webhook_id: Option<String>,
@@ -204,11 +207,32 @@ pub struct MessageReferenceDto {
     /// 1 for a forward; omitted for replies (DEFAULT).
     #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
     pub kind: Option<u8>,
-    pub message_id: String,
+    /// Absent on thread created messages (type 18), whose `channel_id` is the thread.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guild_id: Option<String>,
+}
+
+/// The `call` object of a type 3 message. `ended_timestamp` is null while the
+/// call is running.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallDto {
+    pub participants: Vec<String>,
+    #[serde(default)]
+    pub ended_timestamp: Option<String>,
+}
+
+/// messages: `PATCH /internal/v1/channels/{channel_id}/messages/{message_id}/call`.
+/// Records the end of a call; omitted fields stay unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateCallRequest {
+    #[serde(default)]
+    pub participants: Option<Vec<String>>,
+    #[serde(default)]
+    pub ended_timestamp: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -437,13 +461,22 @@ pub struct InternalCreateMessageRequest {
     /// Recipients of an ephemeral message (the invoking user).
     #[serde(default)]
     pub target_user_ids: Option<Vec<String>>,
-    /// Group DM system message type: 1 RECIPIENT_ADD, 2 RECIPIENT_REMOVE,
-    /// 4 CHANNEL_NAME_CHANGE, 5 CHANNEL_ICON_CHANGE.
+    /// System message type: 1 RECIPIENT_ADD, 2 RECIPIENT_REMOVE, 3 CALL,
+    /// 4 CHANNEL_NAME_CHANGE, 5 CHANNEL_ICON_CHANGE, 6 CHANNEL_PINNED_MESSAGE
+    /// (`message_reference` is the pinned message), 7 GUILD_MEMBER_JOIN
+    /// (`author_id` is the member who joined) and 18 THREAD_CREATED
+    /// (`thread_id`, `content` is the thread name).
     #[serde(default, rename = "type")]
     pub message_type: Option<u8>,
     /// The user a type 1/2 system message is about.
     #[serde(default)]
     pub target_user_id: Option<String>,
+    /// The call a type 3 message reports (`author_id` is the caller).
+    #[serde(default)]
+    pub call: Option<CallDto>,
+    /// The thread a type 18 message announces.
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 /// api: `POST /internal/v1/auth/introspect`.

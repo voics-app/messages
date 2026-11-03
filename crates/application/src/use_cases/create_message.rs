@@ -4,7 +4,7 @@ use std::sync::Arc;
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
-    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS,
+    Attachment, Audience, Call, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS,
     ForwardOrigin, InteractionLink, Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, ReadState,
     UploadKey, UserId, WebhookAuthor,
 };
@@ -63,6 +63,10 @@ pub struct CreateMessageCommand {
     pub system_kind: Option<MessageKind>,
     /// The user a recipient add/remove system message is about.
     pub system_target: Option<UserId>,
+    /// The call a type 3 system message reports.
+    pub call: Option<Call>,
+    /// The thread a type 18 system message announces.
+    pub thread_id: Option<ChannelId>,
 }
 
 pub struct CreateMessage {
@@ -265,6 +269,8 @@ impl CreateMessage {
             interaction: command.interaction,
             system_kind: command.system_kind,
             system_target: command.system_target,
+            call: command.call.clone(),
+            thread_id: command.thread_id,
             forward,
         };
         Ok(Message::compose(

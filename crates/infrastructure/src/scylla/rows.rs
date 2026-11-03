@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use discordy_messages_domain::{
-    Attachment, AttachmentFilename, Bucket, ForwardOrigin, InteractionLink, Mentions, Message, MessageKind,
+    Attachment, AttachmentFilename, Bucket, Call, ForwardOrigin, InteractionLink, Mentions, Message, MessageKind,
     MessageSnapshot, ReadState, Snowflake, WebhookAuthor,
 };
 use scylla::value::CqlTimestamp;
@@ -61,16 +61,19 @@ pub(crate) struct MessageRow {
     forward_message_id: Option<i64>,
     forward_guild_id: Option<i64>,
     forward_snapshot: Option<String>,
+    call_participants: Option<Vec<i64>>,
+    call_ended_at: Option<CqlTimestamp>,
+    thread_id: Option<i64>,
 }
 
 /// The column list matching [`MessageRow`], for SELECT and INSERT.
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, mention_here";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id,      mention_here";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 26;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 29;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -101,6 +104,16 @@ impl MessageRow {
             forward_message_id: message.forward.as_ref().map(|f| id(f.message_id)),
             forward_guild_id: message.forward.as_ref().and_then(|f| f.guild_id.map(id)),
             forward_snapshot: message.forward.as_ref().map(|f| snapshot_json(&f.snapshot)),
+            call_participants: message
+                .call
+                .as_ref()
+                .map(|c| c.participants.iter().copied().map(id).collect()),
+            call_ended_at: message
+                .call
+                .as_ref()
+                .and_then(|c| c.ended_at_ms)
+                .map(|ms| CqlTimestamp(ms as i64)),
+            thread_id: message.thread_id.map(id),
         }
     }
 
@@ -108,11 +121,21 @@ impl MessageRow {
     /// without an author); such rows are treated as deleted.
     pub(crate) fn into_message(self) -> Option<Message> {
         let author_id = self.author_id?;
+        let kind = MessageKind::from_code(self.kind.unwrap_or(0) as u8);
+        let call = (kind == MessageKind::Call).then(|| Call {
+            participants: self
+                .call_participants
+                .unwrap_or_default()
+                .into_iter()
+                .map(snowflake)
+                .collect(),
+            ended_at_ms: self.call_ended_at.map(|t| t.0 as u64),
+        });
         Some(Message {
             id: snowflake(self.message_id),
             channel_id: snowflake(self.channel_id),
             author_id: snowflake(author_id),
-            kind: MessageKind::from_code(self.kind.unwrap_or(0) as u8),
+            kind,
             content: self.content.unwrap_or_default(),
             attachments: self
                 .attachments
@@ -155,6 +178,8 @@ impl MessageRow {
                 }
                 _ => None,
             },
+            call,
+            thread_id: self.thread_id.map(snowflake),
         })
     }
 }
@@ -437,6 +462,41 @@ mod tests {
         .unwrap();
         assert!(message.mentions.here);
         assert_eq!(MessageRow::from_message(&message).into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn call_and_thread_messages_round_trip_through_rows() {
+        let compose = |kind, draft: MessageDraft| {
+            Message::compose(
+                Snowflake::new(1 << 40),
+                Snowflake::new(5),
+                Snowflake::new(6),
+                MessageDraft {
+                    system_kind: Some(kind),
+                    ..draft
+                },
+                false,
+            )
+            .unwrap()
+        };
+        let mut call = compose(MessageKind::Call, MessageDraft::default());
+        call.update_call(
+            Some(1_700_000_000_000),
+            Some(vec![Snowflake::new(6), Snowflake::new(7)]),
+        )
+        .unwrap();
+        assert_eq!(MessageRow::from_message(&call).into_message().unwrap(), call);
+        let running = compose(MessageKind::Call, MessageDraft::default());
+        assert_eq!(MessageRow::from_message(&running).into_message().unwrap(), running);
+        let thread = compose(
+            MessageKind::ThreadCreated,
+            MessageDraft {
+                content: "plans".into(),
+                thread_id: Some(Snowflake::new(77)),
+                ..MessageDraft::default()
+            },
+        );
+        assert_eq!(MessageRow::from_message(&thread).into_message().unwrap(), thread);
     }
 
     #[test]

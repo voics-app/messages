@@ -71,5 +71,9 @@ C4Component
   does not fan out per-user pings for broadcast tags (read-state counts cover explicit user
   mentions), so the online-only filter belongs to the gateway, which owns presence and reads
   `mention_here` from MESSAGE_CREATE.
+- **System messages.** Types 1-7 and 18 are stored like messages with no user text. Pins post
+  type 6 from this service (`reply_to` is the pinned message). Joins (7), threads (18) and calls
+  (3) are posted by api and voice through `/internal`; a call's end arrives later through
+  `PATCH .../call`, which updates the stored `call` and publishes MESSAGE_UPDATE.
 - **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
   channel holds.
