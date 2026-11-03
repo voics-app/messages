@@ -22,7 +22,8 @@ pub const MAX_REDIRECTS: usize = 3;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Time for a whole request including the body.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
-const BOT_USER_AGENT: &str = "Mozilla/5.0 (compatible; DiscordyBot/1.0; +https://discordy.voics.nl)";
+/// Neutral default; the service passes a branded one through [`SafeHttp::with_user_agent`].
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (compatible; LinkPreviewBot/1.0)";
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
@@ -61,6 +62,10 @@ pub struct SafeHttp {
 
 impl SafeHttp {
     pub fn new(policy: SsrfPolicy) -> Result<Self, reqwest::Error> {
+        Self::with_user_agent(policy, DEFAULT_USER_AGENT)
+    }
+
+    pub fn with_user_agent(policy: SsrfPolicy, user_agent: &str) -> Result<Self, reqwest::Error> {
         let client = Client::builder()
             .redirect(Policy::none())
             .no_proxy()
@@ -68,7 +73,7 @@ impl SafeHttp {
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .pool_max_idle_per_host(2)
-            .user_agent(BOT_USER_AGENT)
+            .user_agent(user_agent)
             .build()?;
         Ok(Self { client, policy })
     }
