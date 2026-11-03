@@ -126,7 +126,13 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         }
     };
     // One guarded client for everything that reaches third-party sites.
-    let outbound = SafeHttp::new(SsrfPolicy::strict())?;
+    let outbound = SafeHttp::with_user_agent(
+        SsrfPolicy::strict(),
+        &format!(
+            "Mozilla/5.0 (compatible; {}Bot/1.0; +{})",
+            config.brand_name, config.brand_url
+        ),
+    )?;
     let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
         access: Arc::new(HttpChannelAccess::new(api)),

@@ -7,3 +7,5 @@ pre-push:
       run: make lint
     unit-tests:
       run: cargo test --workspace --lib --bins
+    brand:
+      run: bash scripts/check-brand.sh

@@ -4,8 +4,9 @@ use std::sync::Arc;
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
-    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, ForwardOrigin, InteractionLink,
-    Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, ReadState, UploadKey, UserId, WebhookAuthor,
+    Attachment, Audience, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS,
+    ForwardOrigin, InteractionLink, Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, ReadState,
+    UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
@@ -45,6 +46,9 @@ pub struct CreateMessageCommand {
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
+    /// `allowed_mentions.replied_user == false`: the reply does not mention
+    /// (or notify) the replied-to author.
+    pub suppress_reply_ping: bool,
     /// Forwards another message; `content` is then the optional added comment.
     pub forward: Option<ForwardSource>,
     /// Discord message flags (internal posts only; `FLAG_EPHEMERAL` relays).
@@ -240,8 +244,12 @@ impl CreateMessage {
         command: &CreateMessageCommand,
         forward: Option<ForwardOrigin>,
     ) -> AppResult<Message> {
+        let mut reply_ping = None;
         if let Some(reply_to) = command.reply_to {
-            self.ensure_reply_target_exists(command.channel_id, reply_to).await?;
+            let target = self.reply_target(command.channel_id, reply_to).await?;
+            if !command.suppress_reply_ping && target.webhook.is_none() {
+                reply_ping = Some(target.author_id);
+            }
         }
         let draft = MessageDraft {
             content: command.content.clone(),
@@ -251,6 +259,7 @@ impl CreateMessage {
             embeds: command.embeds.clone(),
             components: command.components.clone(),
             reply_to: command.reply_to,
+            reply_ping,
             flags: command.flags,
             webhook: command.webhook.clone(),
             interaction: command.interaction,
@@ -267,9 +276,9 @@ impl CreateMessage {
         )?)
     }
 
-    async fn ensure_reply_target_exists(&self, channel_id: ChannelId, reply_to: MessageId) -> AppResult<()> {
+    async fn reply_target(&self, channel_id: ChannelId, reply_to: MessageId) -> AppResult<Message> {
         match self.messages.find(channel_id, reply_to).await? {
-            Some(_) => Ok(()),
+            Some(message) => Ok(message),
             None => Err(DomainError::invalid("message_reference", "unknown message").into()),
         }
     }
@@ -313,6 +322,9 @@ impl CreateMessage {
     async fn record_side_effects(&self, message: &Message) {
         if let Err(error) = self.activity.record_standard_message(message.id).await {
             tracing::warn!(%error, "failed to record message activity");
+        }
+        if message.flags & FLAG_SUPPRESS_NOTIFICATIONS != 0 {
+            return;
         }
         for user_id in message.mentions.users.iter().filter(|u| **u != message.author_id) {
             if let Err(error) = self.bump_mention(*user_id, message).await {
@@ -619,6 +631,43 @@ mod tests {
         CreateMessage::new(&h.ports).execute_internal(cmd).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(h.unfurler.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn replying_pings_the_replied_author() {
+        let h = Harness::new();
+        let target = h.seed(BOB, "original").await;
+        let mut cmd = command("reply");
+        cmd.reply_to = Some(target.id);
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        assert!(view.message.mentions.users.contains(&BOB));
+        assert_eq!(
+            h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap().mention_count,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn reply_with_ping_off_mentions_nobody() {
+        let h = Harness::new();
+        let target = h.seed(BOB, "original").await;
+        let mut cmd = command("reply");
+        cmd.reply_to = Some(target.id);
+        cmd.suppress_reply_ping = true;
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        assert!(view.message.mentions.users.is_empty());
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn silent_messages_keep_mentions_but_record_no_unread_mention() {
+        let h = Harness::new();
+        let mut cmd = command(&format!("hey <@{BOB}>"));
+        cmd.flags = FLAG_SUPPRESS_NOTIFICATIONS;
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        assert_eq!(view.message.flags, FLAG_SUPPRESS_NOTIFICATIONS);
+        assert!(view.message.mentions.users.contains(&BOB));
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
     }
 
     #[tokio::test]
