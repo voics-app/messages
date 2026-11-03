@@ -95,6 +95,7 @@ fn internal_command(
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,
+        suppress_reply_ping: false,
         flags: body.flags.unwrap_or(0),
         webhook,
         interaction,

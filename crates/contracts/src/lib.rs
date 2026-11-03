@@ -255,6 +255,27 @@ pub struct CreateMessageRequest {
     pub embeds: Option<Vec<Value>>,
     #[serde(default)]
     pub components: Option<Vec<Value>>,
+    /// Only SUPPRESS_NOTIFICATIONS (4096, `@silent`) is honoured; other bits
+    /// are dropped.
+    #[serde(default)]
+    pub flags: Option<u32>,
+    #[serde(default)]
+    pub allowed_mentions: Option<AllowedMentionsDto>,
+}
+
+/// `allowed_mentions` of a create request. Only `replied_user` is honoured;
+/// `parse`, `roles` and `users` are accepted and ignored.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+pub struct AllowedMentionsDto {
+    #[serde(default)]
+    pub parse: Option<Vec<String>>,
+    #[serde(default)]
+    pub roles: Option<Vec<String>>,
+    #[serde(default)]
+    pub users: Option<Vec<String>>,
+    /// `false` replies without pinging the replied-to author (default true).
+    #[serde(default)]
+    pub replied_user: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

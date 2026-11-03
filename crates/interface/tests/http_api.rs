@@ -195,6 +195,44 @@ async fn a_message_can_be_created_edited_read_and_deleted() {
 }
 
 #[tokio::test]
+async fn silent_flag_is_kept_and_replied_user_false_drops_the_reply_ping() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let (_, original) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "first"})),
+    )
+    .await;
+    let reference = json!({"message_id": original["id"]});
+
+    let (status, silent) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        // EPHEMERAL (64) is not client-settable: only SUPPRESS_NOTIFICATIONS survives.
+        Some(json!({"content": "shh <@11>", "flags": 4096 | 64})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(silent["flags"], 4096);
+
+    let (status, quiet) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "re", "message_reference": reference, "allowed_mentions": {"replied_user": false}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(quiet["mentions"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn non_standard_channels_answer_409_with_code_50160() {
     let harness = Harness::new();
     harness.access.set(Ok(dm_access(DeliveryMode::Ephemeral)));

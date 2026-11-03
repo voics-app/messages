@@ -68,6 +68,9 @@ pub struct MessageDraft {
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
+    /// The author of the replied-to message when the reply pings them
+    /// (`allowed_mentions.replied_user` not false); added to `mentions.users`.
+    pub reply_ping: Option<UserId>,
     pub flags: u32,
     pub webhook: Option<WebhookAuthor>,
     pub interaction: Option<InteractionLink>,
@@ -141,6 +144,9 @@ impl Message {
         };
         if let (true, Some(target)) = (kind.is_system(), draft.system_target) {
             mentions.users.insert(target);
+        }
+        if let (MessageKind::Reply, Some(author)) = (kind, draft.reply_ping) {
+            mentions.users.insert(author);
         }
         let message = Self {
             id,
