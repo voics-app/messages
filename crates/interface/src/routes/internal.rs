@@ -4,13 +4,14 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use contracts::{
-    AdminStatsResponse, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto,
+    AdminStatsResponse, CallDto, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode,
+    ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
-use discordy_messages_domain::{InteractionLink, MessageKind, WebhookAuthor};
+use discordy_messages_domain::{Call, InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
 
-use crate::dto::{read_state_dto, single};
+use crate::dto::{parse_rfc3339, read_state_dto, single};
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, Id, InternalCaller, parse_id};
 use crate::routes::messages::json_texts;
@@ -78,6 +79,12 @@ fn internal_command(
         .as_deref()
         .map(|raw| parse_id("target_user_id", raw))
         .transpose()?;
+    let call = body.call.as_ref().map(call_from_dto).transpose()?;
+    let thread_id = body
+        .thread_id
+        .as_deref()
+        .map(|raw| parse_id("thread_id", raw))
+        .transpose()?;
     Ok(CreateMessageCommand {
         channel_id,
         author_id,
@@ -102,8 +109,54 @@ fn internal_command(
         target_user_ids,
         system_kind,
         system_target,
+        call,
+        thread_id,
         ..CreateMessageCommand::default()
     })
+}
+
+fn call_from_dto(call: &CallDto) -> Result<Call, ApiError> {
+    Ok(Call {
+        participants: parse_ids("call.participants", &call.participants)?,
+        ended_at_ms: call
+            .ended_timestamp
+            .as_deref()
+            .map(|raw| parse_timestamp("call.ended_timestamp", raw))
+            .transpose()?,
+    })
+}
+
+fn parse_ids(field: &str, raw: &[String]) -> Result<Vec<discordy_messages_domain::UserId>, ApiError> {
+    raw.iter().map(|id| parse_id(field, id)).collect()
+}
+
+fn parse_timestamp(field: &str, raw: &str) -> Result<u64, ApiError> {
+    parse_rfc3339(raw).ok_or_else(|| ApiError::invalid(field, "must be an RFC 3339 timestamp"))
+}
+
+/// Records the end of a call on its system message.
+pub async fn update_call(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath((Id(channel_id), Id(message_id))): ApiPath<(Id, Id)>,
+    ApiJson(body): ApiJson<UpdateCallRequest>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let ended_at_ms = body
+        .ended_timestamp
+        .as_deref()
+        .map(|raw| parse_timestamp("ended_timestamp", raw))
+        .transpose()?;
+    let participants = body
+        .participants
+        .as_deref()
+        .map(|raw| parse_ids("participants", raw))
+        .transpose()?;
+    let view = state
+        .use_cases
+        .update_call
+        .execute(channel_id, message_id, ended_at_ms, participants)
+        .await?;
+    Ok(Json(single(&state, &view).await))
 }
 
 pub async fn last_message_id(

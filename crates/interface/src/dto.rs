@@ -1,12 +1,12 @@
 //! Mapping between domain objects and the wire contracts.
 
 use contracts::{
-    AttachmentDto, AuthorOverrideDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto,
+    AttachmentDto, AuthorOverrideDto, CallDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto,
     MessageSnapshotDto, ReactionDto, ReadStateDto, SnapshotMessageDto, UserRef,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_domain::{
-    Attachment, ChannelId, Emoji, GuildId, Message, MessageSnapshot, ReactionCount, ReadState,
+    Attachment, Call, ChannelId, Emoji, GuildId, Message, MessageSnapshot, ReactionCount, ReadState,
 };
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -24,6 +24,12 @@ pub fn rfc3339(unix_ms: u64) -> String {
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
         .format(&Rfc3339)
         .unwrap_or_default()
+}
+
+/// Parses an RFC 3339 timestamp into unix milliseconds.
+pub fn parse_rfc3339(text: &str) -> Option<u64> {
+    let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;
+    u64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
 pub fn emoji_dto(emoji: &Emoji) -> EmojiDto {
@@ -80,17 +86,32 @@ fn reference_dto(message: &Message, guild_id: Option<GuildId>) -> Option<Message
     if let Some(origin) = &message.forward {
         return Some(MessageReferenceDto {
             kind: Some(1),
-            message_id: origin.message_id.to_string(),
+            message_id: Some(origin.message_id.to_string()),
             channel_id: Some(origin.channel_id.to_string()),
             guild_id: origin.guild_id.map(|g| g.to_string()),
         });
     }
+    if let Some(thread) = message.thread_id {
+        return Some(MessageReferenceDto {
+            kind: None,
+            message_id: None,
+            channel_id: Some(thread.to_string()),
+            guild_id: guild_id.map(|g| g.to_string()),
+        });
+    }
     message.reply_to.map(|id| MessageReferenceDto {
         kind: None,
-        message_id: id.to_string(),
+        message_id: Some(id.to_string()),
         channel_id: Some(message.channel_id.to_string()),
         guild_id: guild_id.map(|g| g.to_string()),
     })
+}
+
+fn call_dto(call: &Call) -> CallDto {
+    CallDto {
+        participants: call.participants.iter().map(ToString::to_string).collect(),
+        ended_timestamp: call.ended_at_ms.map(rfc3339),
+    }
 }
 
 /// Snapshot files live under the channel of the message that carries them.
@@ -156,6 +177,7 @@ pub fn message_dto(
         kind: message.kind.code(),
         flags: message.flags,
         message_reference: reference_dto(message, guild_id),
+        call: message.call.as_ref().map(call_dto),
         message_snapshots: message
             .forward
             .iter()
@@ -211,7 +233,7 @@ mod tests {
 
     use super::*;
     use discordy_messages_application::fakes::FakeClock;
-    use discordy_messages_domain::{MessageDraft, Snowflake};
+    use discordy_messages_domain::{MessageDraft, MessageKind, Snowflake};
 
     fn urls() -> AttachmentUrls {
         AttachmentUrls::new(
@@ -251,10 +273,78 @@ mod tests {
             &Authors::new(),
         );
         assert_eq!(dto.kind, 19);
-        assert_eq!(dto.message_reference.unwrap().message_id, "3");
+        assert_eq!(dto.message_reference.unwrap().message_id.as_deref(), Some("3"));
         assert_eq!(dto.mentions, vec![UserRef { id: "7".into() }]);
         assert_eq!(dto.guild_id.as_deref(), Some("8"));
         assert_eq!(dto.nonce.as_deref(), Some("n"));
+    }
+
+    fn system_message(kind: MessageKind, draft: MessageDraft) -> MessageDto {
+        let message = Message::compose(
+            Snowflake::new(1 << 22),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            MessageDraft {
+                system_kind: Some(kind),
+                ..draft
+            },
+            false,
+        )
+        .unwrap();
+        message_dto(&message, &[], Some(Snowflake::new(8)), None, &urls(), &Authors::new())
+    }
+
+    #[test]
+    fn pins_reference_the_pinned_message() {
+        let dto = system_message(
+            MessageKind::ChannelPinnedMessage,
+            MessageDraft {
+                reply_to: Some(Snowflake::new(3)),
+                ..MessageDraft::default()
+            },
+        );
+        assert_eq!(dto.kind, 6);
+        let reference = dto.message_reference.unwrap();
+        assert_eq!(reference.message_id.as_deref(), Some("3"));
+        assert_eq!(reference.channel_id.as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn thread_messages_reference_the_thread_channel() {
+        let dto = system_message(
+            MessageKind::ThreadCreated,
+            MessageDraft {
+                content: "plans".into(),
+                thread_id: Some(Snowflake::new(77)),
+                ..MessageDraft::default()
+            },
+        );
+        assert_eq!(dto.kind, 18);
+        let reference = dto.message_reference.unwrap();
+        assert_eq!(reference.channel_id.as_deref(), Some("77"));
+        assert_eq!(reference.message_id, None);
+        assert_eq!(dto.content, "plans");
+    }
+
+    #[test]
+    fn calls_render_participants_and_the_end_time() {
+        let running = system_message(MessageKind::Call, MessageDraft::default());
+        assert_eq!(running.kind, 3);
+        assert_eq!(
+            running.call,
+            Some(CallDto {
+                participants: vec!["6".into()],
+                ended_timestamp: None
+            })
+        );
+        let ended = call_dto(&Call {
+            participants: vec![Snowflake::new(6), Snowflake::new(7)],
+            ended_at_ms: Some(1_767_225_600_123),
+        });
+        assert_eq!(ended.ended_timestamp.as_deref(), Some("2026-01-01T00:00:00.123Z"));
+        assert_eq!(ended.participants, ["6", "7"]);
+        assert_eq!(parse_rfc3339("2026-01-01T00:00:00.123Z"), Some(1_767_225_600_123));
+        assert_eq!(parse_rfc3339("nope"), None);
     }
 
     #[test]

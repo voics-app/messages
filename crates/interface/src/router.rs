@@ -6,7 +6,7 @@ use std::time::Instant;
 use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 
 use crate::routes::{attachments, download, external, health, internal, messages, pins, reactions, search};
 use crate::state::AppState;
@@ -60,6 +60,10 @@ pub fn router(state: AppState) -> Router {
 
     let internal = Router::new()
         .route("/channels/{channel_id}/messages", post(internal::create_message))
+        .route(
+            "/channels/{channel_id}/messages/{message_id}/call",
+            patch(internal::update_call),
+        )
         .route("/channels/{channel_id}/last-message-id", get(internal::last_message_id))
         .route("/users/{user_id}/read-states", get(internal::read_states))
         .route("/admin/stats", get(internal::admin_stats))
