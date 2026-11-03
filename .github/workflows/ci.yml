@@ -20,6 +20,13 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: discordy-voics/.github/.github/workflows/gitflow-guard.yml@main
 
+  brand:
+    # Rebrand check (docs#69): no hard-coded product name or domain in user-visible strings.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-brand.sh
+
   rust:
     permissions:
       contents: read

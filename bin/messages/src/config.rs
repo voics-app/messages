@@ -16,6 +16,10 @@ pub struct ConfigError(Vec<String>);
 
 #[derive(Clone)]
 pub struct Config {
+    /// Product name (`BRAND_NAME`); only used to build the outbound unfurl user agent.
+    pub brand_name: String,
+    /// Public site URL (`BRAND_URL`), advertised in the unfurl user agent.
+    pub brand_url: String,
     pub environment: Environment,
     pub log_level: String,
     pub bind_addr: SocketAddr,
@@ -69,6 +73,8 @@ impl Config {
         let bind_addr = reader.socket_addr("BIND_ADDR", DEFAULT_BIND_ADDR);
         let worker = reader.worker();
         let config = Self {
+            brand_name: reader.optional("BRAND_NAME", "Discordy"), // brand-check: allow (brand source)
+            brand_url: reader.optional("BRAND_URL", "https://discordy.voics.nl"), // brand-check: allow (brand source)
             environment,
             log_level: reader.optional("LOG_LEVEL", "info"),
             bind_addr,
