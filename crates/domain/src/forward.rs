@@ -41,6 +41,7 @@ impl MessageSnapshot {
                 roles: source.mentions.roles.clone(),
                 // The forward must not notify everyone again.
                 everyone: false,
+                here: false,
             },
             flags: source.flags,
             created_at_ms: source.timestamp_ms(),

@@ -22,6 +22,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_message_forward",
         include_str!("../../../../migrations/0004_message_forward.cql"),
     ),
+    (
+        "0006_mention_here",
+        include_str!("../../../../migrations/0006_mention_here.cql"),
+    ),
 ];
 
 /// Creates the keyspace when missing (replication factor 1: the platform

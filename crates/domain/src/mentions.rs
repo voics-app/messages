@@ -9,15 +9,22 @@ use crate::{RoleId, Snowflake, UserId};
 pub struct Mentions {
     pub users: BTreeSet<UserId>,
     pub roles: BTreeSet<RoleId>,
+    /// Discord parity: `@here` also sets `everyone`. `here` is set when that
+    /// is the only broadcast tag, i.e. only members who are online at send
+    /// time are to be notified. `@everyone` anywhere in the content wins.
     pub everyone: bool,
+    pub here: bool,
 }
 
 impl Mentions {
     /// Extracts mentions. `@everyone`/`@here` only count when the author is
     /// allowed to use them.
     pub fn parse(content: &str, may_mention_everyone: bool) -> Self {
+        let everyone_tag = content.contains("@everyone");
+        let here_tag = content.contains("@here");
         let mut mentions = Self {
-            everyone: may_mention_everyone && (content.contains("@everyone") || content.contains("@here")),
+            everyone: may_mention_everyone && (everyone_tag || here_tag),
+            here: may_mention_everyone && here_tag && !everyone_tag,
             ..Self::default()
         };
         let mut rest = content;
@@ -90,5 +97,18 @@ mod tests {
         assert!(Mentions::parse("@everyone look", true).everyone);
         assert!(Mentions::parse("@here look", true).everyone);
         assert!(!Mentions::parse("hello", true).everyone);
+    }
+
+    #[test]
+    fn here_is_online_only_and_everyone_wins() {
+        let here = Mentions::parse("@here look", true);
+        assert!(here.everyone && here.here);
+        let everyone = Mentions::parse("@everyone look", true);
+        assert!(everyone.everyone && !everyone.here);
+        let both = Mentions::parse("@here and @everyone", true);
+        assert!(both.everyone && !both.here);
+        let denied = Mentions::parse("@here look", false);
+        assert!(!denied.everyone && !denied.here);
+        assert!(!Mentions::parse("hello", true).here);
     }
 }
