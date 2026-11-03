@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use discordy_messages_domain::access::MAX_PINS;
-use discordy_messages_domain::{ChannelId, DomainError, MessageId, UserId};
+use discordy_messages_domain::{ChannelId, DomainError, MessageId, MessageKind, UserId};
 
-use super::MessagingPorts;
 use super::support::{announce, event, find_message};
+use super::{CreateMessage, CreateMessageCommand, MessagingPorts};
 use crate::error::AppResult;
 use crate::ports::{
     ChannelAccessProvider, Clock, EventPublisher, MessageEventKind, MessageRepository, Pin, PinRepository,
@@ -16,6 +16,7 @@ pub struct PinMessage {
     pins: Arc<dyn PinRepository>,
     events: Arc<dyn EventPublisher>,
     clock: Arc<dyn Clock>,
+    create: CreateMessage,
 }
 
 impl PinMessage {
@@ -26,10 +27,13 @@ impl PinMessage {
             pins: ports.pins.clone(),
             events: ports.events.clone(),
             clock: ports.clock.clone(),
+            create: CreateMessage::new(ports),
         }
     }
 
-    /// Pins a message (at most 50 per channel). Pinning twice is a no-op.
+    /// Pins a message (at most 50 per channel) and posts the "pinned a
+    /// message" system message (type 6) referencing it. Pinning twice is a
+    /// no-op.
     pub async fn execute(&self, channel_id: ChannelId, message_id: MessageId, actor: UserId) -> AppResult<()> {
         let access = self.access.access(channel_id, actor).await?;
         access.ensure_can_pin()?;
@@ -62,7 +66,22 @@ impl PinMessage {
             ),
         )
         .await;
+        self.announce_pin(channel_id, message_id, actor).await;
         Ok(())
+    }
+
+    /// Best effort: the pin itself is already stored.
+    async fn announce_pin(&self, channel_id: ChannelId, message_id: MessageId, actor: UserId) {
+        let command = CreateMessageCommand {
+            channel_id,
+            author_id: actor,
+            reply_to: Some(message_id),
+            system_kind: Some(MessageKind::ChannelPinnedMessage),
+            ..CreateMessageCommand::default()
+        };
+        if let Err(error) = self.create.execute_internal(command).await {
+            tracing::warn!(%channel_id, %message_id, %error, "failed to post the pin system message");
+        }
     }
 }
 
@@ -84,12 +103,42 @@ mod tests {
             .unwrap();
         assert!(h.messages.find(CHANNEL, message.id).await.unwrap().unwrap().pinned);
         assert_eq!(h.pins.list(CHANNEL).await.unwrap().len(), 1);
+        let kinds = h.events.kinds();
         assert_eq!(
-            h.events.kinds(),
-            vec![MessageEventKind::PinsUpdated {
+            kinds[0],
+            MessageEventKind::PinsUpdated {
                 last_pin_timestamp_ms: Some(START_MS)
-            }]
+            }
         );
+        assert_eq!(kinds.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn posts_a_pin_system_message_referencing_the_pinned_message() {
+        let h = Harness::new();
+        h.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+        let message = h.seed(ALICE, "rules").await;
+        PinMessage::new(&h.ports)
+            .execute(CHANNEL, message.id, BOB)
+            .await
+            .unwrap();
+        let last = h.messages.last_message_id(CHANNEL).await.unwrap().unwrap();
+        let notice = h.messages.find(CHANNEL, last).await.unwrap().unwrap();
+        assert_eq!(notice.kind, MessageKind::ChannelPinnedMessage);
+        assert_eq!(notice.author_id, BOB);
+        assert_eq!(notice.reply_to, Some(message.id));
+        assert!(notice.mentions.users.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pinning_twice_posts_one_system_message() {
+        let h = Harness::new();
+        h.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+        let message = h.seed(ALICE, "rules").await;
+        let use_case = PinMessage::new(&h.ports);
+        use_case.execute(CHANNEL, message.id, ALICE).await.unwrap();
+        use_case.execute(CHANNEL, message.id, ALICE).await.unwrap();
+        assert_eq!(h.events.kinds().len(), 2);
     }
 
     #[tokio::test]
