@@ -113,6 +113,17 @@ async fn post_internal(app: &Router, uri: &str, token: Option<&str>, body: Value
     send(app, request.body(Body::from(body.to_string())).unwrap()).await
 }
 
+async fn patch_internal(app: &Router, uri: &str, token: Option<&str>, body: Value) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(Method::PATCH)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = token {
+        request = request.header("x-internal-token", token);
+    }
+    send(app, request.body(Body::from(body.to_string())).unwrap()).await
+}
+
 async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
@@ -443,6 +454,113 @@ async fn internal_interaction_responses_link_their_interaction() {
     assert_eq!(created["interaction_metadata"]["id"], "31");
     assert_eq!(created["application_id"], "32");
     assert!(created.get("webhook_id").is_none());
+}
+
+#[tokio::test]
+async fn internal_system_messages_cover_join_thread_and_call() {
+    let harness = Harness::new();
+    harness.access.set_permissions(Permissions::VIEW_CHANNEL);
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages");
+
+    let (status, join) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "type": 7}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(join["type"], 7);
+    assert_eq!(join["content"], "");
+
+    let (status, thread) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "type": 18, "content": "plans", "thread_id": "777"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(thread["type"], 18);
+    assert_eq!(thread["message_reference"]["channel_id"], "777");
+    assert!(thread["message_reference"].get("message_id").is_none());
+
+    let (status, body) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "type": 18, "content": "no thread"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], 50035);
+
+    let (status, call_message) = post_internal(
+        &app,
+        &uri,
+        Some(INTERNAL),
+        json!({"author_id": BOB.to_string(), "type": 3, "call": {"participants": [BOB.to_string()]}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(call_message["call"]["participants"], json!([BOB.to_string()]));
+    assert!(call_message["call"]["ended_timestamp"].is_null());
+
+    let update = format!(
+        "/internal/v1/channels/{CHANNEL}/messages/{}/call",
+        call_message["id"].as_str().unwrap()
+    );
+    let ended =
+        json!({"ended_timestamp": "2026-01-01T00:00:00.123Z", "participants": [BOB.to_string(), ALICE.to_string()]});
+    let (status, _) = patch_internal(&app, &update, None, ended.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, updated) = patch_internal(&app, &update, Some(INTERNAL), ended).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["call"]["ended_timestamp"], "2026-01-01T00:00:00.123Z");
+    assert_eq!(updated["call"]["participants"].as_array().unwrap().len(), 2);
+
+    let (status, _) = patch_internal(&app, &update, Some(INTERNAL), json!({"ended_timestamp": "yesterday"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let join_update = format!(
+        "/internal/v1/channels/{CHANNEL}/messages/{}/call",
+        join["id"].as_str().unwrap()
+    );
+    let (status, _) = patch_internal(
+        &app,
+        &join_update,
+        Some(INTERNAL),
+        json!({"ended_timestamp": "2026-01-01T00:00:00Z"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pinning_posts_a_system_message_that_references_the_pinned_one() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | Permissions::MANAGE_MESSAGES);
+    let app = app(&harness);
+    let message = harness.seed(ALICE, "rules").await;
+    let (status, _) = call(
+        &app,
+        Method::PUT,
+        &format!("/api/v1/channels/{CHANNEL}/pins/{}", message.id),
+        Some(ALICE_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, history) = call(
+        &app,
+        Method::GET,
+        &format!("/api/v1/channels/{CHANNEL}/messages?limit=1"),
+        Some(ALICE_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(history[0]["type"], 6);
+    assert_eq!(history[0]["message_reference"]["message_id"], message.id.to_string());
 }
 
 #[tokio::test]

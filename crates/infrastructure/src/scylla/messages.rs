@@ -47,7 +47,7 @@ impl ScyllaMessageRepository {
             update_content: prepare(
                 s,
                 "UPDATE messages SET content = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
-                 mention_everyone = ?, edited_at = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
+                 mention_everyone = ?, mention_here = ?, edited_at = ?, call_participants = ?, call_ended_at = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
             )
             .await?,
             set_pinned: prepare(
@@ -112,7 +112,17 @@ impl MessageRepository for ScyllaMessageRepository {
                 message.mentions.users.iter().copied().map(id).collect::<Vec<_>>(),
                 message.mentions.roles.iter().copied().map(id).collect::<Vec<_>>(),
                 message.mentions.everyone,
+                message.mentions.here,
                 message.edited_at_ms.map(|ms| CqlTimestamp(ms as i64)),
+                message
+                    .call
+                    .as_ref()
+                    .map(|c| c.participants.iter().copied().map(id).collect::<Vec<_>>()),
+                message
+                    .call
+                    .as_ref()
+                    .and_then(|c| c.ended_at_ms)
+                    .map(|ms| CqlTimestamp(ms as i64)),
                 channel,
                 bucket,
                 message_id,

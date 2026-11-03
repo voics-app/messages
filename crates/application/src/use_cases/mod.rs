@@ -32,6 +32,7 @@ mod search_messages;
 mod support;
 mod unfurl_links;
 mod unpin_message;
+mod update_call;
 
 pub use acknowledge_message::AcknowledgeMessage;
 pub use add_reaction::AddReaction;
@@ -55,6 +56,7 @@ pub use remove_own_reaction::RemoveOwnReaction;
 pub use search_messages::{SearchMessages, SearchOutcome, SearchResultMessage, SearchScope};
 pub use unfurl_links::UnfurlLinks;
 pub use unpin_message::UnpinMessage;
+pub use update_call::UpdateCall;
 
 /// Every port the use cases depend on, wired once by the composition root.
 #[derive(Clone)]

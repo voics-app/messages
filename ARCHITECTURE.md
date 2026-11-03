@@ -66,5 +66,14 @@ C4Component
   `POST /channels/{id}/attachments/refresh-urls` re-signs object keys or old URLs of that channel
   for members who can read it (Ephemeral recipients get their links there).
   See docs ADR 0017.
+- **@here.** `Mentions.here` marks a message whose only broadcast tag is `@here`; `mention_everyone`
+  stays true for it (Discord parity) and the DTO adds `mention_here`. messages holds no presence and
+  does not fan out per-user pings for broadcast tags (read-state counts cover explicit user
+  mentions), so the online-only filter belongs to the gateway, which owns presence and reads
+  `mention_here` from MESSAGE_CREATE.
+- **System messages.** Types 1-7 and 18 are stored like messages with no user text. Pins post
+  type 6 from this service (`reply_to` is the pinned message). Joins (7), threads (18) and calls
+  (3) are posted by api and voice through `/internal`; a call's end arrives later through
+  `PATCH .../call`, which updates the stored `call` and publishes MESSAGE_UPDATE.
 - **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
   channel holds.

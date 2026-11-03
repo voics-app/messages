@@ -14,7 +14,7 @@ use discordy_messages_domain::paging::plan;
 use discordy_messages_domain::snowflake::DISCORDY_EPOCH_MS;
 use discordy_messages_domain::{
     Attachment, AttachmentFilename, Bucket, Emoji, ForwardOrigin, HistoryCursor, Mentions, Message, MessageDraft,
-    MessageSnapshot, PageLimit, ReadState, ScanDirection, Snowflake,
+    MessageKind, MessageSnapshot, PageLimit, ReadState, ScanDirection, Snowflake,
 };
 use discordy_messages_infrastructure::scylla::{
     ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
@@ -56,6 +56,7 @@ async fn scylla_adapters_against_a_real_node() {
     let activity = ScyllaActivityRepository::new(Arc::clone(&session)).await.unwrap();
 
     message_crud(messages.as_ref()).await;
+    system_message_payloads(messages.as_ref()).await;
     bucketed_history(Arc::clone(&messages), Arc::clone(&reactions)).await;
     last_message_id_never_regresses(messages.as_ref()).await;
     reactions_round_trip(reactions.as_ref()).await;
@@ -130,6 +131,35 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     // An edit racing the delete leaves a partial row, which must stay invisible.
     repo.update(&edited).await.unwrap();
     assert_eq!(repo.find(channel, original.id).await.unwrap(), None);
+}
+
+/// Calls keep their participants and end time, and updating one leaves the rest of the row alone.
+async fn system_message_payloads(repo: &ScyllaMessageRepository) {
+    let channel = id_at(3, 0);
+    let draft = MessageDraft {
+        system_kind: Some(MessageKind::Call),
+        ..MessageDraft::default()
+    };
+    let mut call = Message::compose(id_at(BUCKET_SIZE_MS * 2, 5), channel, AUTHOR, draft, false).unwrap();
+    repo.insert(&call).await.unwrap();
+    let running = repo.find(channel, call.id).await.unwrap().unwrap();
+    assert_eq!(running.call.as_ref().unwrap().participants, vec![AUTHOR]);
+    assert_eq!(running.call.unwrap().ended_at_ms, None);
+
+    call.update_call(Some(1_700_000_000_000), Some(vec![AUTHOR, Snowflake::new(7)]))
+        .unwrap();
+    repo.update(&call).await.unwrap();
+    assert_eq!(repo.find(channel, call.id).await.unwrap().unwrap(), call);
+
+    let draft = MessageDraft {
+        system_kind: Some(MessageKind::ThreadCreated),
+        content: "plans".into(),
+        thread_id: Some(Snowflake::new(77)),
+        ..MessageDraft::default()
+    };
+    let thread = Message::compose(id_at(BUCKET_SIZE_MS * 2, 6), channel, AUTHOR, draft, false).unwrap();
+    repo.insert(&thread).await.unwrap();
+    assert_eq!(repo.find(channel, thread.id).await.unwrap().unwrap(), thread);
 }
 
 async fn bucketed_history(repo: Arc<ScyllaMessageRepository>, reactions: Arc<ScyllaReactionRepository>) {
