@@ -1,4 +1,4 @@
--- Voics messages keyspace: initial schema (spec §6.2, pinned interface P10).
+-- Discordy messages keyspace: initial schema (spec §6.2, pinned interface P10).
 -- Every statement is idempotent; the migrator records applied versions.
 
 CREATE TYPE IF NOT EXISTS attachment (
