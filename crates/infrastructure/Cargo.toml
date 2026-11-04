@@ -41,6 +41,7 @@ test-support = []
 testcontainers = "0.28"
 tokio = { workspace = true, features = ["test-util"] }
 axum = "0.8"
+metrics-exporter-prometheus.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 discordy-messages-infrastructure = { path = ".", features = ["test-support"] }
 
