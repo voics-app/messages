@@ -737,6 +737,7 @@ dependencies = [
  "imagesize",
  "jsonwebtoken",
  "metrics",
+ "metrics-exporter-prometheus",
  "moka",
  "reqwest",
  "rskafka",

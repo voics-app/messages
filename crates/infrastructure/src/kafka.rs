@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use discordy_messages_application::PortError;
@@ -86,12 +87,25 @@ impl EventSink for KafkaEventSink {
             headers: BTreeMap::new(),
             timestamp: chrono::Utc::now(),
         };
-        self.partition_client(topic, partition)
+        let started = Instant::now();
+        let result = self
+            .partition_client(topic, partition)
             .await?
             .produce(vec![record], Compression::NoCompression)
             .await
             .map(|_| ())
-            .map_err(port_error)
+            .map_err(port_error);
+        observe_produce(topic, started, result.is_ok());
+        result
+    }
+}
+
+/// `kafka_produce_duration_seconds{topic}` and, on failure, `kafka_produce_errors_total{topic}`.
+fn observe_produce(topic: &str, started: Instant, ok: bool) {
+    metrics::histogram!("kafka_produce_duration_seconds", "topic" => topic.to_owned())
+        .record(started.elapsed().as_secs_f64());
+    if !ok {
+        metrics::counter!("kafka_produce_errors_total", "topic" => topic.to_owned()).increment(1);
     }
 }
 
@@ -134,6 +148,22 @@ fn murmur2(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metrics_exporter_prometheus::PrometheusBuilder;
+
+    #[test]
+    fn produce_records_latency_and_errors() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        observe_produce("t", Instant::now(), true);
+        observe_produce("t", Instant::now(), false);
+        let text = handle.render();
+        assert!(
+            text.contains("kafka_produce_duration_seconds_count{topic=\"t\"} 2"),
+            "{text}"
+        );
+        assert!(text.contains("kafka_produce_errors_total{topic=\"t\"} 1"), "{text}");
+    }
 
     #[test]
     fn murmur2_matches_the_java_client() {

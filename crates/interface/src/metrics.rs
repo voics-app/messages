@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use discordy_messages_application::ports::MessageEventKind;
 use metrics_exporter_prometheus::PrometheusHandle;
 
 /// Histogram buckets (seconds) shared by request and database latency.
@@ -54,9 +55,45 @@ impl Metrics {
     }
 }
 
+/// Counts the message lifecycle events that were published: `messages_created_total`,
+/// `messages_edited_total` and `messages_deleted_total` (a bulk delete adds one per message).
+pub fn record_message_event(kind: &MessageEventKind) {
+    match kind {
+        MessageEventKind::Created { .. } => metrics::counter!("messages_created_total").increment(1),
+        MessageEventKind::Updated { .. } => metrics::counter!("messages_edited_total").increment(1),
+        MessageEventKind::Deleted { .. } => metrics::counter!("messages_deleted_total").increment(1),
+        MessageEventKind::DeletedBulk { message_ids } => {
+            metrics::counter!("messages_deleted_total").increment(message_ids.len() as u64);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use discordy_messages_domain::Snowflake;
+    use metrics_exporter_prometheus::PrometheusBuilder;
+
+    #[test]
+    fn counts_lifecycle_events() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        record_message_event(&MessageEventKind::Deleted {
+            message_id: Snowflake::new(1),
+        });
+        record_message_event(&MessageEventKind::DeletedBulk {
+            message_ids: vec![Snowflake::new(2), Snowflake::new(3)],
+        });
+        record_message_event(&MessageEventKind::Acknowledged {
+            message_id: Snowflake::new(1),
+            mention_count: 0,
+        });
+        let text = handle.render();
+        assert!(text.contains("messages_deleted_total 3"), "{text}");
+        assert!(!text.contains("messages_created_total"), "{text}");
+    }
 
     #[test]
     fn classifies_status() {

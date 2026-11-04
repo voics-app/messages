@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::attachment_urls::AttachmentUrls;
 use crate::authors::{Authors, resolve};
 use crate::dto::{emoji_dto, message_dto, rfc3339};
+use crate::metrics::record_message_event;
 
 pub struct EnvelopePublisher {
     sink: Arc<dyn EventSink>,
@@ -175,6 +176,7 @@ impl EventPublisher for EnvelopePublisher {
             _ => Authors::new(),
         };
         let envelope = self.envelope(&event, &authors)?;
+        record_message_event(&event.kind);
         let payload = serde_json::to_vec(&envelope).map_err(PortError::new)?;
         self.sink
             .send(MESSAGE_TOPIC, &event.channel_id.to_string(), payload)
