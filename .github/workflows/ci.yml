@@ -34,7 +34,7 @@ jobs:
     uses: discordy-voics/.github/.github/workflows/rust.yml@main
     with:
       image-name: messages
-      description: Discordy messages service
+      description: Voics messages service
       # RUSTSEC-2023-0071 (rsa Marvin attack) has no fixed release; messages never performs RSA decryption.
       audit-args: --ignore RUSTSEC-2023-0071
     secrets:
@@ -49,4 +49,4 @@ jobs:
     uses: discordy-voics/.github/.github/workflows/docker.yml@main
     with:
       image-name: messages
-      description: Discordy messages service
+      description: Voics messages service

@@ -1,6 +1,6 @@
 //! Snowflake identifiers (pinned interface P5).
 //!
-//! Layout: 42 bits of milliseconds since the Discordy epoch, 10 bits of worker
+//! Layout: 42 bits of milliseconds since the Voics epoch, 10 bits of worker
 //! id and 12 bits of per-millisecond sequence.
 
 use std::fmt;
@@ -31,7 +31,7 @@ impl Snowflake {
         self.0
     }
 
-    /// Milliseconds since the Discordy epoch encoded in this id.
+    /// Milliseconds since the Voics epoch encoded in this id.
     pub const fn epoch_millis(self) -> u64 {
         self.0 >> TIMESTAMP_SHIFT
     }

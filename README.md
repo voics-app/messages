@@ -1,6 +1,6 @@
 # messages
 
-The Discordy messages service (Rust, axum, ScyllaDB). It stores message history in 10-day
+The Voics messages service (Rust, axum, ScyllaDB). It stores message history in 10-day
 ScyllaDB buckets, and serves reactions, pins, read states and attachment uploads. It publishes
 every change to `discordy.message.v1` on Redpanda. Only `standard` delivery-mode channels are
 accepted; other modes get `409` with code `50160`.
