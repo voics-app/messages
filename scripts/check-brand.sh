@@ -5,7 +5,7 @@
 # Internal identifiers (crate names, image names, env var prefixes) are out of scope on purpose.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-name="${BRAND_NAME:-Discordy}"
+name="${BRAND_NAME:-Voics}"
 domain="${BRAND_DOMAIN:-voics.nl}"
 hits=$(grep -rnE --include='*.rs' "\"[^\"]*(${name}|${domain//./\.})" crates bin 2>/dev/null \
   | grep -v '/tests/' | grep -v 'brand-check: allow' || true)
