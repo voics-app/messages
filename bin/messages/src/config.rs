@@ -73,7 +73,7 @@ impl Config {
         let bind_addr = reader.socket_addr("BIND_ADDR", DEFAULT_BIND_ADDR);
         let worker = reader.worker();
         let config = Self {
-            brand_name: reader.optional("BRAND_NAME", "Discordy"), // brand-check: allow (brand source)
+            brand_name: reader.optional("BRAND_NAME", "Voics"), // brand-check: allow (brand source)
             brand_url: reader.optional("BRAND_URL", "https://discordy.voics.nl"), // brand-check: allow (brand source)
             environment,
             log_level: reader.optional("LOG_LEVEL", "info"),
