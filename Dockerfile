@@ -32,7 +32,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 ARG VERSION=0.1.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="messages" \
-      org.opencontainers.image.description="Discordy messages service: message history, reactions, pins, read states and attachments" \
+      org.opencontainers.image.description="Voics messages service: message history, reactions, pins, read states and attachments" \
       org.opencontainers.image.source="https://github.com/discordy-voics/messages" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \

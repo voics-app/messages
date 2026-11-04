@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages-interface"
-description = "HTTP interface of the Discordy messages service: public REST, internal API and event envelopes"
+description = "HTTP interface of the Voics messages service: public REST, internal API and event envelopes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

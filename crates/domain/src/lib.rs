@@ -1,4 +1,4 @@
-//! Domain model of the Discordy messages service.
+//! Domain model of the Voics messages service.
 //!
 //! This crate is pure: no IO, no framework, no async. Everything here can be
 //! reasoned about (and tested) in isolation.

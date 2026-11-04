@@ -1,4 +1,4 @@
-//! Application layer of the Discordy messages service: use cases (one per
+//! Application layer of the Voics messages service: use cases (one per
 //! file) orchestrating the domain through ports.
 
 pub mod coalescer;

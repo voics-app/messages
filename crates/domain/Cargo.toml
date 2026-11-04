@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages-domain"
-description = "Pure domain model of the Discordy messages service"
+description = "Pure domain model of the Voics messages service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

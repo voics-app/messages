@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages-infrastructure"
-description = "Adapters of the Discordy messages service: ScyllaDB, Redpanda, MinIO and the api service"
+description = "Adapters of the Voics messages service: ScyllaDB, Redpanda, MinIO and the api service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
