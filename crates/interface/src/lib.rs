@@ -1,4 +1,4 @@
-//! Interface layer of the Discordy messages service: the axum HTTP surface
+//! Interface layer of the Voics messages service: the axum HTTP surface
 //! (public REST and internal API) and the event-bus envelope encoder.
 
 pub mod attachment_urls;

@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages-application"
-description = "Use cases and ports of the Discordy messages service"
+description = "Use cases and ports of the Voics messages service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

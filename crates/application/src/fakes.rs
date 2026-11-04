@@ -23,7 +23,7 @@ pub const CHANNEL: Snowflake = Snowflake::new(1 << 22);
 pub const GUILD: Snowflake = Snowflake::new(500);
 pub const ALICE: Snowflake = Snowflake::new(10);
 pub const BOB: Snowflake = Snowflake::new(11);
-/// 100 days after the Discordy epoch.
+/// 100 days after the Voics epoch.
 pub const START_MS: u64 = DISCORDY_EPOCH_MS + 100 * 86_400_000;
 
 pub const MEMBER: u64 = Permissions::VIEW_CHANNEL

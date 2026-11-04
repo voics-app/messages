@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages"
-description = "Discordy messages service: composition root and entry point"
+description = "Voics messages service: composition root and entry point"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

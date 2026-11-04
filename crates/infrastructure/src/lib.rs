@@ -1,4 +1,4 @@
-//! Infrastructure adapters of the Discordy messages service.
+//! Infrastructure adapters of the Voics messages service.
 
 pub mod api;
 pub mod ban_purge;
