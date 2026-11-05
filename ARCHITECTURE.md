@@ -77,3 +77,7 @@ C4Component
   `PATCH .../call`, which updates the stored `call` and publishes MESSAGE_UPDATE.
 - **Events** are keyed by `channel_id`, partitioned with Kafka's murmur2 so ordering per
   channel holds.
+
+## Notifier
+
+`crates/notifier` is a library with its own layers (`domain`: decision rules and push text, no IO; `application`: ports, `EventHandler`, the bounded `Dispatcher`; `infrastructure`: APNs, the api client, the Redpanda consumer) and `bin/notifier` is its composition root. It shares only `contracts` with the messages service and ships as a separate image. Who gets a push is decided by `domain::decide` from the facts the api resolves (effective level, mute, role ids, live session), so the rules sit next to the client rules they mirror. What a push says is decided by `domain::compose`, which is fail-closed: only the delivery mode `standard` may show text. See the README for back-pressure and the single-replica constraint.

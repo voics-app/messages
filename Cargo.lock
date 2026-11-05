@@ -789,6 +789,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "discordy-messages-notifier"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "discordy-messages-contracts",
+ "jsonwebtoken",
+ "metrics",
+ "p256",
+ "rand_core 0.6.4",
+ "reqwest",
+ "rskafka",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "discordy-notifier"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "discordy-messages-notifier",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2599,6 +2634,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
