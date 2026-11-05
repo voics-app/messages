@@ -4,6 +4,7 @@
 //! host and a store build's to the production host, unless the configuration forces one. The same
 //! sender carries PushKit VoIP pushes (`OutboundPush::Voip`), which use the `.voip` topic.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -70,6 +71,8 @@ pub struct ApnsSender {
     config: ApnsConfig,
     key: EncodingKey,
     jwt: Mutex<Option<CachedJwt>>,
+    /// Tokens found to belong to the other host than the one registered with them.
+    learned: Mutex<HashMap<String, Environment>>,
 }
 
 fn unix_seconds() -> u64 {
@@ -90,6 +93,7 @@ impl ApnsSender {
             config,
             key,
             jwt: Mutex::new(None),
+            learned: Mutex::new(HashMap::new()),
         };
         sender
             .provider_token()
@@ -126,8 +130,8 @@ impl ApnsSender {
         }
     }
 
-    fn base_url(&self, token: &DeviceToken) -> &str {
-        match self.config.environment_override.unwrap_or(token.environment) {
+    fn base_url(&self, environment: Environment) -> &str {
+        match environment {
             Environment::Production => &self.config.production_url,
             Environment::Sandbox => &self.config.sandbox_url,
         }
@@ -167,9 +171,32 @@ pub(crate) fn classify(status: u16, reason: Option<&str>) -> Result<(), SendErro
     }
 }
 
-#[async_trait]
-impl PushSender for ApnsSender {
-    async fn send(&self, token: &DeviceToken, push: &OutboundPush) -> Result<(), SendError> {
+/// The most tokens whose corrected host is remembered; the map is cleared when it fills up.
+const LEARNED_LIMIT: usize = 10_000;
+
+fn other(environment: Environment) -> Environment {
+    match environment {
+        Environment::Production => Environment::Sandbox,
+        Environment::Sandbox => Environment::Production,
+    }
+}
+
+impl ApnsSender {
+    fn learned_host(&self, token: &str) -> Option<Environment> {
+        self.learned.lock().ok()?.get(token).copied()
+    }
+
+    fn learn_host(&self, token: &str, environment: Environment) {
+        if let Ok(mut learned) = self.learned.lock() {
+            if learned.len() >= LEARNED_LIMIT {
+                learned.clear();
+            }
+            learned.insert(token.to_owned(), environment);
+        }
+    }
+
+    /// One request to the APNs host of `environment`.
+    async fn post(&self, environment: Environment, token: &str, push: &OutboundPush) -> Result<(), SendError> {
         let (push_type, topic, payload) = match push {
             OutboundPush::Alert(alert) => ("alert", self.config.topic.clone(), alert_payload(alert)),
             OutboundPush::Voip(payload) => ("voip", format!("{}.voip", self.config.topic), payload.clone()),
@@ -177,7 +204,7 @@ impl PushSender for ApnsSender {
         let expiration = unix_seconds() + self.config.ttl.as_secs();
         let response = self
             .http
-            .post(format!("{}/3/device/{}", self.base_url(token), token.token))
+            .post(format!("{}/3/device/{token}", self.base_url(environment)))
             .header("authorization", format!("bearer {}", self.provider_token()?))
             .header("apns-topic", topic)
             .header("apns-push-type", push_type)
@@ -208,6 +235,32 @@ impl PushSender for ApnsSender {
             self.forget_provider_token();
         }
         result
+    }
+}
+
+#[async_trait]
+impl PushSender for ApnsSender {
+    /// Sends to the host the token was issued for. `BadDeviceToken` is what APNs answers when a
+    /// sandbox token reaches the production host or the other way round (an ad-hoc build can carry
+    /// either, depending on how it was signed), so the other host gets one try before the token is
+    /// declared dead, and a token that works there is remembered. A forced environment never falls back.
+    async fn send(&self, token: &DeviceToken, push: &OutboundPush) -> Result<(), SendError> {
+        if let Some(forced) = self.config.environment_override {
+            return self.post(forced, &token.token, push).await;
+        }
+        let first = self.learned_host(&token.token).unwrap_or(token.environment);
+        match self.post(first, &token.token, push).await {
+            Err(SendError::InvalidToken(reason)) if reason == "BadDeviceToken" => {
+                let second = other(first);
+                let result = self.post(second, &token.token, push).await;
+                if result.is_ok() {
+                    metrics::counter!("notifier_apns_host_corrections_total").increment(1);
+                    self.learn_host(&token.token, second);
+                }
+                result
+            }
+            result => result,
+        }
     }
 }
 
@@ -371,6 +424,57 @@ mod tests {
 
         assert_eq!(sandbox.0.lock().unwrap().len(), 1);
         assert!(production.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_token_on_the_wrong_host_is_retried_on_the_other_one_and_remembered() {
+        let keys = keys();
+        let (production, sandbox) = (Seen::default(), Seen::default());
+        let production_url = fake_apns(production.clone(), (StatusCode::BAD_REQUEST, "BadDeviceToken")).await;
+        let sandbox_url = fake_apns(sandbox.clone(), (StatusCode::OK, "")).await;
+        let sender = sender(&keys, &production_url, &sandbox_url);
+        let registered_as_production = device("bad-1", Environment::Production);
+
+        sender.send(&registered_as_production, &alert()).await.unwrap();
+        sender.send(&registered_as_production, &alert()).await.unwrap();
+
+        assert_eq!(
+            production.0.lock().unwrap().len(),
+            1,
+            "only the first send tried production"
+        );
+        assert_eq!(sandbox.0.lock().unwrap().len(), 2, "the host that worked is remembered");
+    }
+
+    #[tokio::test]
+    async fn a_token_both_hosts_reject_is_invalid_and_a_forced_host_never_falls_back() {
+        let keys = keys();
+        let (production, sandbox) = (Seen::default(), Seen::default());
+        let rejecting = (StatusCode::BAD_REQUEST, "BadDeviceToken");
+        let production_url = fake_apns(production.clone(), rejecting).await;
+        let sandbox_url = fake_apns(sandbox.clone(), rejecting).await;
+        let sender = sender(&keys, &production_url, &sandbox_url);
+        assert_eq!(
+            sender.send(&device("bad-1", Environment::Production), &alert()).await,
+            Err(SendError::InvalidToken("BadDeviceToken".into()))
+        );
+        assert_eq!(
+            (production.0.lock().unwrap().len(), sandbox.0.lock().unwrap().len()),
+            (1, 1)
+        );
+
+        let mut config = ApnsConfig::new(keys.private.clone(), "K".into(), "T".into(), "nl.example.app".into());
+        config.production_url = production_url;
+        config.sandbox_url = sandbox_url;
+        config.environment_override = Some(Environment::Production);
+        let forced = ApnsSender::new(config).unwrap();
+        let before = sandbox.0.lock().unwrap().len();
+        let _ = forced.send(&device("bad-2", Environment::Sandbox), &alert()).await;
+        assert_eq!(
+            sandbox.0.lock().unwrap().len(),
+            before,
+            "no fallback when the host is forced"
+        );
     }
 
     #[tokio::test]
