@@ -25,6 +25,37 @@ call message), `GET /channels/{id}/last-message-id`, `GET /users/{id}/read-state
 
 Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`. Metrics: `http_requests_total` and `http_request_duration_seconds` (method, route, status class), `db_query_duration_seconds` (db, operation), `messages_created_total`, `messages_edited_total`, `messages_deleted_total`, `kafka_produce_duration_seconds` and `kafka_produce_errors_total` (topic).
 
+## Notifier (push notifications)
+
+`bin/notifier` (crate `crates/notifier`, image `messages-notifier` from `Dockerfile.notifier`, port 8085) is a second worker in this workspace. It reads `discordy.message.v1` from the end of the topic, and for every `MESSAGE_CREATE` asks the api (`GET /internal/v1/channels/{id}/push-targets`) for the members who can view the channel, hold a push token and are not the author. It then applies the clients' notification rules (`decide`: a live gateway session, mute, level, mention, role, `@everyone`, `@here`, `@silent`, and the device's own "only mentions" preference that travels with its token) and sends the push through APNs with token auth. `fcm` tokens are counted as `unsupported` and not sent yet.
+
+- **Privacy.** Only a channel whose delivery mode is exactly `standard` may put text (and the author, channel and server names) into a push; anything else, including an unknown mode, gets the title `New message` and no body. A device that turned previews off gets `New message` as the body in standard chats.
+- **Back-pressure (ADR 0016).** Pushes go through a bounded queue (`PUSH_QUEUE_CAPACITY`) and at most `PUSH_MAX_IN_FLIGHT` provider requests at once; a full queue drops the push and counts it (`notifier_pushes_total{outcome="dropped"}`). Provider errors are retried with exponential backoff up to `PUSH_MAX_ATTEMPTS`; a rejected token (APNs 410, `BadDeviceToken`, `DeviceTokenNotForTopic`) is removed through `DELETE /internal/v1/push-tokens`.
+- **Sandbox and production.** Each token carries the environment it was issued for (development builds register `sandbox`); the sender uses `api.sandbox.push.apple.com` or `api.push.apple.com` per token. `BadDeviceToken` is what APNs answers when a token reaches the wrong host (an ad-hoc build can carry either kind), so the other host gets one try before the token is removed, and the host that worked is remembered. `APNS_ENVIRONMENT` forces one host for every token and disables the fallback.
+- **One replica.** There is no stored offset and no consumer group: the notifier starts at the end of the topic and ignores events older than `PUSH_MAX_EVENT_AGE_SECS`, so run exactly one replica (the gitops deployment uses `Recreate`).
+- **VoIP.** `OutboundPush::Voip` and the `.voip` topic are in the sender for the call ticket; nothing produces them yet.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `KAFKA_BROKERS` | yes | | Redpanda bootstrap addresses |
+| `API_INTERNAL_URL` | yes | | api base URL |
+| `INTERNAL_SERVICE_TOKEN` | yes | | `X-Internal-Token` for the api |
+| `APNS_KEY_FILE` | yes (or `APNS_KEY`) | | Path of the mounted `.p8` key (PKCS#8 PEM); `APNS_KEY` holds the PEM text for local runs |
+| `APNS_KEY_ID` | yes | | Key ID of the key |
+| `APNS_TEAM_ID` | yes | | Apple Team ID |
+| `APNS_TOPIC` | no | `nl.voics.app` | iOS bundle identifier |
+| `APNS_ENVIRONMENT` | no | per token | `production` or `sandbox` |
+| `BIND_ADDR` | no | `0.0.0.0:8085` | probes and metrics |
+| `LOG_LEVEL` | no | `info` | tracing filter |
+| `PUSH_QUEUE_CAPACITY` | no | `10000` | Bounded buffer; a full buffer drops pushes |
+| `PUSH_MAX_IN_FLIGHT` | no | `100` | Concurrent provider requests |
+| `PUSH_MAX_ATTEMPTS` | no | `3` | Sends per push, retries included |
+| `PUSH_BASE_BACKOFF_MS` / `PUSH_MAX_BACKOFF_MS` | no | `500` / `10000` | Retry backoff, doubled per attempt |
+| `PUSH_MAX_EVENT_AGE_SECS` | no | `120` | Older events are not pushed |
+| `PUSH_DEDUPE_CAPACITY` | no | `10000` | Recent event ids remembered |
+
+Endpoints: `/healthz`, `/readyz` (Redpanda), `/metrics`. Metrics: `notifier_events_total{result}`, `notifier_decisions_total{verdict}`, `notifier_pushes_total{provider,outcome}` (sent, invalid_token, failed, dropped, unsupported), `notifier_push_retries_total`, `notifier_push_duration_seconds`, `notifier_queue_depth`, `notifier_apns_errors_total{status,reason}`, `notifier_consumer_errors_total`.
+
 ## Run locally
 
 Start the compose stack from the `gitops` repo (`gitops/local`), then:

@@ -50,3 +50,16 @@ jobs:
     with:
       image-name: messages
       description: Voics messages service
+
+  docker-notifier:
+    # The notifier is a second binary of this workspace with its own image (docs plans/2026-11-03-mobile-app.md).
+    needs: rust
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: discordy-voics/.github/.github/workflows/docker.yml@main
+    with:
+      image-name: messages-notifier
+      dockerfile: Dockerfile.notifier
+      description: Voics notifier (push notifications)
