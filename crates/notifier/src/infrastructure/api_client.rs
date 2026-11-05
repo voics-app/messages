@@ -59,6 +59,8 @@ struct TokenBody {
     token: String,
     environment: String,
     previews: bool,
+    #[serde(default)]
+    only_mentions: bool,
 }
 
 impl TokenBody {
@@ -79,6 +81,7 @@ impl TokenBody {
             token: self.token,
             environment,
             previews: self.previews,
+            only_mentions: self.only_mentions,
         })
     }
 }
@@ -191,7 +194,7 @@ mod tests {
                     "user_id": "42", "role_ids": ["9"], "online": false, "level": 1, "muted": true,
                     "suppress_everyone": true, "suppress_roles": false,
                     "tokens": [
-                        {"platform": "apns", "token": "abc", "environment": "sandbox", "previews": false},
+                        {"platform": "apns", "token": "abc", "environment": "sandbox", "previews": false, "only_mentions": true},
                         {"platform": "wns", "token": "x", "environment": "production", "previews": true},
                         {"platform": "fcm", "token": "f", "environment": "staging", "previews": true}
                     ]
@@ -231,7 +234,8 @@ mod tests {
                 platform: Platform::Apns,
                 token: "abc".into(),
                 environment: Environment::Sandbox,
-                previews: false
+                previews: false,
+                only_mentions: true
             }],
             "unknown platforms and environments are dropped"
         );
@@ -246,6 +250,7 @@ mod tests {
             token: "abc".into(),
             environment: Environment::Sandbox,
             previews: true,
+            only_mentions: false,
         };
         client.forget(&token).await.unwrap();
         assert_eq!(log.0.lock().unwrap()[0], r#"DELETE {"platform":"apns","token":"abc"}"#);
@@ -260,6 +265,7 @@ mod tests {
             token: "abc".into(),
             environment: Environment::Sandbox,
             previews: true,
+            only_mentions: false,
         };
         assert!(client.forget(&token).await.is_err());
     }

@@ -339,6 +339,7 @@ mod tests {
             token: token.into(),
             environment,
             previews: true,
+            only_mentions: false,
         }
     }
 

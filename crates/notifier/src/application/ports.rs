@@ -45,6 +45,8 @@ pub struct DeviceToken {
     pub environment: Environment,
     /// Whether the device wants a text preview in standard chats.
     pub previews: bool,
+    /// The device wants pushes for mentions and direct messages only, whatever the server settings say.
+    pub only_mentions: bool,
 }
 
 /// A member with push tokens, as the api service reports it.

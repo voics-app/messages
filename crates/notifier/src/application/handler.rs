@@ -9,7 +9,7 @@ use contracts::{Envelope, MessageDto, event_type};
 
 use super::dispatcher::{Dispatcher, Submitted};
 use super::ports::{Platform, TargetDirectory};
-use crate::domain::{IncomingMessage, OutboundPush, Verdict, compose, decide};
+use crate::domain::{IncomingMessage, OutboundPush, Verdict, compose, decide, is_mentioned};
 
 const DIRECTORY_ATTEMPTS: u32 = 3;
 const DIRECTORY_BACKOFF: Duration = Duration::from_millis(200);
@@ -114,6 +114,11 @@ impl EventHandler {
                 Verdict::Notify => {
                     metrics::counter!("notifier_decisions_total", "verdict" => "notify").increment(1);
                     for token in &target.tokens {
+                        if token.only_mentions && !is_mentioned(&message, &target.recipient) {
+                            metrics::counter!("notifier_decisions_total", "verdict" => "device_only_mentions")
+                                .increment(1);
+                            continue;
+                        }
                         if token.platform != Platform::Apns {
                             metrics::counter!(
                                 "notifier_pushes_total",
@@ -218,6 +223,7 @@ mod tests {
             token: token.into(),
             environment: Environment::Sandbox,
             previews,
+            only_mentions: false,
         }
     }
 
@@ -356,6 +362,37 @@ mod tests {
         rig.handler.handle(&envelope("e1", NOW_MS - 1000, json!({}))).await;
         settle().await;
         assert_eq!(sent_to(&rig), vec!["phone", "tablet"]);
+    }
+
+    #[tokio::test]
+    async fn a_device_that_wants_only_mentions_skips_plain_messages_but_not_pings() {
+        let picky = DeviceToken {
+            only_mentions: true,
+            ..apns("picky", true)
+        };
+        let rig = rig(
+            vec![Target {
+                recipient: recipient("1"),
+                tokens: vec![picky, apns("open", true)],
+            }],
+            "standard",
+        );
+        rig.handler.handle(&envelope("plain", NOW_MS, json!({}))).await;
+        settle().await;
+        assert_eq!(
+            sent_to(&rig),
+            vec!["open"],
+            "level all, but this device wants mentions only"
+        );
+
+        let ping = json!({"mentions": [{"id": "1"}]});
+        rig.handler.handle(&envelope("ping", NOW_MS, ping)).await;
+        settle().await;
+        assert_eq!(
+            sent_to(&rig),
+            vec!["open", "open", "picky"],
+            "a direct mention reaches both devices"
+        );
     }
 
     #[tokio::test]

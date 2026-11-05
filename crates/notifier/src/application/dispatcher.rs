@@ -196,6 +196,7 @@ mod tests {
             token: name.into(),
             environment: Environment::Sandbox,
             previews: true,
+            only_mentions: false,
         }
     }
 

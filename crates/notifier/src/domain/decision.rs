@@ -62,7 +62,7 @@ pub enum Verdict {
 /// DMs, direct mentions, a mention of one of the recipient's roles and `@everyone` count as
 /// mentions unless the recipient suppressed them. `@here` only pings members who are online when
 /// it is sent, and a push recipient is by definition not online.
-fn is_mentioned(message: &IncomingMessage, recipient: &Recipient) -> bool {
+pub fn is_mentioned(message: &IncomingMessage, recipient: &Recipient) -> bool {
     if message.is_direct() || message.mentions.contains(&recipient.user_id) {
         return true;
     }
