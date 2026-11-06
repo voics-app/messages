@@ -9,10 +9,12 @@ use contracts::{Envelope, MessageDto, event_type};
 
 use super::dispatcher::{Dispatcher, Submitted};
 use super::ports::{Platform, TargetDirectory};
-use crate::domain::{IncomingMessage, OutboundPush, Verdict, compose, decide, is_mentioned};
+use crate::domain::{IncomingMessage, OutboundPush, Verdict, compose, compose_call, decide, is_mentioned};
 
 const DIRECTORY_ATTEMPTS: u32 = 3;
 const DIRECTORY_BACKOFF: Duration = Duration::from_millis(200);
+/// A call ring older than this is not pushed (the gateway rings for 30 seconds).
+const CALL_MAX_AGE_MS: i64 = 20_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandlerConfig {
@@ -99,6 +101,13 @@ impl EventHandler {
             return event_result("unparsable");
         };
         let message = IncomingMessage::from_dto(dto);
+        if message.is_call_ring() {
+            // A phone rings for a few seconds: a call event that sat in a queue longer than that is over.
+            if age.is_some_and(|age| age > CALL_MAX_AGE_MS) {
+                return event_result("stale_call");
+            }
+            return self.ring(&message).await;
+        }
         if !message.is_pushable() {
             return event_result("not_pushable");
         }
@@ -133,6 +142,47 @@ impl EventHandler {
                             tracing::debug!(channel = %message.channel_id, "push queue full, dropped");
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Rings every device of the recipients of a DM call that has just started, with a PushKit push
+    /// (`OutboundPush::Voip`). Who rings: members of the conversation other than the caller, who are not
+    /// in the call yet and have not muted the conversation. Online status and the message level do not
+    /// matter: a phone that went to the background keeps a live gateway session for a while, and a call
+    /// that does not ring is worse than one that rings twice (the app shows one call, see
+    /// `docs/handbook/13-mobile-client.md`).
+    async fn ring(&self, message: &IncomingMessage) {
+        let Some(found) = self.targets(message).await else {
+            return event_result("directory_error");
+        };
+        event_result("call");
+        let payload = compose_call(message, &found.context);
+        let in_call = message
+            .call
+            .as_ref()
+            .map(|call| call.participants.as_slice())
+            .unwrap_or_default();
+        for target in &found.targets {
+            let verdict = if in_call.contains(&target.recipient.user_id) {
+                "call_in_call"
+            } else if target.recipient.muted {
+                "call_muted"
+            } else {
+                "call_ring"
+            };
+            metrics::counter!("notifier_decisions_total", "verdict" => verdict).increment(1);
+            if verdict != "call_ring" {
+                continue;
+            }
+            for token in &target.voip_tokens {
+                if self
+                    .dispatcher
+                    .submit(token.clone(), OutboundPush::Voip(payload.clone()))
+                    == Submitted::Dropped
+                {
+                    tracing::debug!(channel = %message.channel_id, "push queue full, dropped a call ring");
                 }
             }
         }
@@ -343,18 +393,22 @@ mod tests {
                 Target {
                     recipient: recipient("1"),
                     tokens: vec![apns("phone", true), apns("tablet", true)],
+                    voip_tokens: Vec::new(),
                 },
                 Target {
                     recipient: online,
                     tokens: vec![apns("online", true)],
+                    voip_tokens: Vec::new(),
                 },
                 Target {
                     recipient: muted,
                     tokens: vec![apns("muted", true)],
+                    voip_tokens: Vec::new(),
                 },
                 Target {
                     recipient: nothing,
                     tokens: vec![apns("nothing", true)],
+                    voip_tokens: Vec::new(),
                 },
             ],
             "standard",
@@ -374,6 +428,7 @@ mod tests {
             vec![Target {
                 recipient: recipient("1"),
                 tokens: vec![picky, apns("open", true)],
+                voip_tokens: Vec::new(),
             }],
             "standard",
         );
@@ -401,6 +456,7 @@ mod tests {
             vec![Target {
                 recipient: recipient("1"),
                 tokens: vec![apns("shows", true), apns("hides", false)],
+                voip_tokens: Vec::new(),
             }],
             "standard",
         );
@@ -421,6 +477,7 @@ mod tests {
             vec![Target {
                 recipient: recipient("1"),
                 tokens: vec![apns("phone", true)],
+                voip_tokens: Vec::new(),
             }],
             "ephemeral",
         );
@@ -448,6 +505,7 @@ mod tests {
             vec![Target {
                 recipient: recipient("1"),
                 tokens: vec![fcm, apns("phone", true)],
+                voip_tokens: Vec::new(),
             }],
             "standard",
         );
@@ -462,6 +520,7 @@ mod tests {
             vec![Target {
                 recipient: recipient("1"),
                 tokens: vec![apns("phone", true)],
+                voip_tokens: Vec::new(),
             }],
             "standard",
         );
@@ -498,6 +557,142 @@ mod tests {
         rig.handler.handle(&envelope("e1", NOW_MS, json!({}))).await;
         assert_eq!(rig.directory.calls.load(Ordering::SeqCst), 3);
         assert!(sent_to(&rig).is_empty());
+    }
+
+    fn call_envelope(id: &str, at_ms: i64, overrides: serde_json::Value) -> Envelope {
+        let mut data = json!({"type": 3, "guild_id": null, "content": "", "call": {"participants": ["7"]}});
+        for (key, value) in overrides.as_object().cloned().unwrap_or_default() {
+            data[key] = value;
+        }
+        envelope(id, at_ms, data)
+    }
+
+    fn with_voip(user: &str, phone: &str, voip: &str) -> Target {
+        Target {
+            recipient: recipient(user),
+            tokens: vec![apns(phone, true)],
+            voip_tokens: vec![apns(voip, false)],
+        }
+    }
+
+    fn voip_payloads(rig: &Rig) -> Vec<(String, serde_json::Value)> {
+        rig.sender
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(token, push)| match push {
+                OutboundPush::Voip(payload) => (token.token.clone(), payload.clone()),
+                OutboundPush::Alert(alert) => panic!("a call must not be an alert: {alert:?}"),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_new_dm_call_rings_every_voip_device_and_sends_no_alert() {
+        let both = Target {
+            recipient: recipient("1"),
+            tokens: vec![apns("phone", true)],
+            voip_tokens: vec![apns("voip-phone", false), apns("voip-tablet", false)],
+        };
+        let rig = rig(vec![both, with_voip("2", "other", "voip-other")], "standard");
+        rig.handler.handle(&call_envelope("c1", NOW_MS - 1000, json!({}))).await;
+        settle().await;
+        let sent = voip_payloads(&rig);
+        let mut tokens: Vec<&str> = sent.iter().map(|(token, _)| token.as_str()).collect();
+        tokens.sort_unstable();
+        assert_eq!(tokens, vec!["voip-other", "voip-phone", "voip-tablet"]);
+        assert_eq!(sent[0].1["type"], "call");
+        assert_eq!(sent[0].1["caller_name"], "Alice");
+        assert_eq!(sent[0].1["channel_id"], "10");
+    }
+
+    #[tokio::test]
+    async fn a_call_rings_a_user_who_has_only_a_voip_token() {
+        let only_voip = Target {
+            recipient: recipient("1"),
+            tokens: Vec::new(),
+            voip_tokens: vec![apns("voip", false)],
+        };
+        let rig = rig(vec![only_voip], "standard");
+        rig.handler.handle(&call_envelope("c1", NOW_MS, json!({}))).await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["voip"]);
+    }
+
+    #[tokio::test]
+    async fn a_call_does_not_ring_people_already_in_it_or_who_muted_the_conversation_but_ignores_online_and_level() {
+        let muted = Recipient {
+            muted: true,
+            ..recipient("3")
+        };
+        let online_quiet = Recipient {
+            online: true,
+            level: Level::NoMessages,
+            ..recipient("4")
+        };
+        let rig = rig(
+            vec![
+                with_voip("1", "p1", "v-joined"),
+                Target {
+                    recipient: muted,
+                    tokens: Vec::new(),
+                    voip_tokens: vec![apns("v-muted", false)],
+                },
+                Target {
+                    recipient: online_quiet,
+                    tokens: Vec::new(),
+                    voip_tokens: vec![apns("v-online", false)],
+                },
+            ],
+            "standard",
+        );
+        let call = json!({"call": {"participants": ["7", "1"]}});
+        rig.handler.handle(&call_envelope("c1", NOW_MS, call)).await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["v-online"]);
+    }
+
+    #[tokio::test]
+    async fn an_encrypted_dm_call_rings_without_the_name_and_with_no_message_text() {
+        for mode in ["ephemeral", "p2p", "something-new"] {
+            let rig = rig(vec![with_voip("1", "p", "v")], mode);
+            let overrides = json!({"content": "top secret"});
+            rig.handler.handle(&call_envelope("c1", NOW_MS, overrides)).await;
+            settle().await;
+            let sent = voip_payloads(&rig);
+            assert_eq!(sent.len(), 1, "{mode}");
+            let text = sent[0].1.to_string();
+            assert!(
+                !text.contains("Alice") && !text.contains("secret") && !text.contains("general"),
+                "{mode}: {text}"
+            );
+            assert_eq!(sent[0].1["private"], true);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ended_a_server_a_stale_and_a_repeated_call_event_ring_nothing() {
+        let rig = rig(vec![with_voip("1", "p", "v")], "standard");
+        let ended = json!({"call": {"participants": ["7"], "ended_timestamp": "2026-11-05T10:05:00Z"}});
+        rig.handler.handle(&call_envelope("ended", NOW_MS, ended)).await;
+        rig.handler
+            .handle(&call_envelope("server", NOW_MS, json!({"guild_id": "1"})))
+            .await;
+        rig.handler
+            .handle(&call_envelope("stale", NOW_MS - 25_000, json!({})))
+            .await;
+        settle().await;
+        assert!(sent_to(&rig).is_empty());
+
+        rig.handler
+            .handle(&call_envelope("once", NOW_MS - 5000, json!({})))
+            .await;
+        rig.handler
+            .handle(&call_envelope("once", NOW_MS - 5000, json!({})))
+            .await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["v"], "a repeated event id rings once");
     }
 
     #[test]

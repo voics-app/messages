@@ -14,6 +14,9 @@ use tokio::sync::{Semaphore, mpsc};
 use super::ports::{DeviceToken, PushSender, SendError, TokenRegistry};
 use crate::domain::OutboundPush;
 
+/// How long a call ring (a PushKit push) may be retried: the phone rings for 30 seconds.
+const VOIP_RETRY_WINDOW: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, Copy)]
 pub struct DispatchConfig {
     /// Jobs that may wait for a free slot; beyond this, new jobs are dropped.
@@ -91,7 +94,7 @@ fn outcome(provider: &'static str, label: &'static str) {
 
 async fn deliver(config: DispatchConfig, job: Job, sender: &dyn PushSender, registry: &dyn TokenRegistry) {
     let provider = job.token.platform.label();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let mut attempt = 1;
     loop {
         match sender.send(&job.token, &job.push).await {
@@ -115,7 +118,9 @@ async fn deliver(config: DispatchConfig, job: Job, sender: &dyn PushSender, regi
                 return;
             }
             Err(SendError::Retry { reason, after }) => {
-                if attempt >= config.max_attempts {
+                // A call ring that has been retried for longer than the phone rings is of no use.
+                let ring_over = matches!(job.push, OutboundPush::Voip(_)) && started.elapsed() > VOIP_RETRY_WINDOW;
+                if attempt >= config.max_attempts || ring_over {
                     tracing::warn!(provider, %reason, attempt, "push failed, giving up");
                     outcome(provider, "failed");
                     return;
@@ -311,6 +316,34 @@ mod tests {
         settle().await;
         assert_eq!(sender.attempts.load(Ordering::SeqCst), 3, "max_attempts");
         assert!(registry.forgotten.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_ring_stops_retrying_once_the_phone_would_have_stopped_ringing() {
+        let slow = DispatchConfig {
+            max_attempts: 50,
+            max_backoff: Duration::from_secs(5),
+            ..config()
+        };
+        let run = |push: OutboundPush| async {
+            let sender = Arc::new(FakeSender::default());
+            for _ in 0..50 {
+                sender.script.lock().unwrap().push_back(Err(SendError::Retry {
+                    reason: "503".into(),
+                    after: Some(Duration::from_secs(3)),
+                }));
+            }
+            let dispatcher = Dispatcher::spawn(slow, sender.clone(), Arc::new(FakeRegistry::default()));
+            dispatcher.submit(token("t"), push);
+            tokio::time::sleep(Duration::from_secs(300)).await;
+            sender.attempts.load(Ordering::SeqCst)
+        };
+        assert_eq!(
+            run(OutboundPush::Voip(serde_json::json!({"type": "call"}))).await,
+            5,
+            "attempts at 0, 3, 6, 9 and 12 seconds"
+        );
+        assert_eq!(run(push()).await, 50, "an alert keeps retrying up to max_attempts");
     }
 
     #[tokio::test(start_paused = true)]

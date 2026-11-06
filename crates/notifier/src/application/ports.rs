@@ -54,6 +54,8 @@ pub struct DeviceToken {
 pub struct Target {
     pub recipient: Recipient,
     pub tokens: Vec<DeviceToken>,
+    /// PushKit tokens: they only ring the phone for a call and need no notification permission.
+    pub voip_tokens: Vec<DeviceToken>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
