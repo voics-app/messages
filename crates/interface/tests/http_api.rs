@@ -1308,3 +1308,30 @@ async fn forwarding_validates_the_reference_and_permissions() {
     .await;
     assert_eq!((status, body["code"].as_u64()), (StatusCode::CONFLICT, Some(50160)));
 }
+
+#[tokio::test]
+async fn internal_get_message_returns_the_stored_message() {
+    let harness = Harness::new();
+    let message = harness.seed(BOB, "report me").await;
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages/{}", message.id);
+    let get = |uri: &str, token: Option<&str>| {
+        let mut request = Request::builder().method(Method::GET).uri(uri.to_owned());
+        if let Some(token) = token {
+            request = request.header("x-internal-token", token);
+        }
+        request.body(Body::empty()).unwrap()
+    };
+
+    let (status, _) = send(&app, get(&uri, None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = send(&app, get(&uri, Some(INTERNAL))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["content"], "report me");
+    assert_eq!(body["author"]["id"], BOB.to_string());
+
+    let missing = format!("/internal/v1/channels/{CHANNEL}/messages/{}", message.id.value() + 1);
+    let (status, _) = send(&app, get(&missing, Some(INTERNAL))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

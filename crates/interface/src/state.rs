@@ -5,9 +5,9 @@ use std::sync::Arc;
 use discordy_messages_application::ports::{AttachmentStorage, Authenticator, RemoteMediaFetcher, UserDirectory};
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
-    GetLastMessageId, GetMessageHistory, GetMessageStats, ListPins, ListReactionUsers, ListReadStates, MessagingPorts,
-    PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction, RemoveReactions,
-    SearchMessages, UnpinMessage, UpdateCall,
+    GetLastMessageId, GetMessage, GetMessageHistory, GetMessageStats, ListPins, ListReactionUsers, ListReadStates,
+    MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction,
+    RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
 };
 use subtle::ConstantTimeEq;
 
@@ -48,6 +48,7 @@ pub struct UseCases {
     pub upload_slots: CreateUploadSlots,
     pub refresh_urls: RefreshAttachmentUrls,
     pub last_message_id: GetLastMessageId,
+    pub get_message: GetMessage,
     pub read_states: ListReadStates,
     pub stats: GetMessageStats,
     pub search: SearchMessages,
@@ -75,6 +76,7 @@ impl UseCases {
             upload_slots: CreateUploadSlots::new(ports),
             refresh_urls: RefreshAttachmentUrls::new(ports),
             last_message_id: GetLastMessageId::new(ports),
+            get_message: GetMessage::new(ports),
             read_states: ListReadStates::new(ports),
             stats: GetMessageStats::new(ports),
             search: SearchMessages::new(ports),
