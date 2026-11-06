@@ -201,7 +201,11 @@ impl ApnsSender {
             OutboundPush::Alert(alert) => ("alert", self.config.topic.clone(), alert_payload(alert)),
             OutboundPush::Voip(payload) => ("voip", format!("{}.voip", self.config.topic), payload.clone()),
         };
-        let expiration = unix_seconds() + self.config.ttl.as_secs();
+        // A call that is not delivered at once is not delivered at all: APNs tries once and drops it, so a ring never arrives after the caller hung up.
+        let expiration = match push {
+            OutboundPush::Alert(_) => unix_seconds() + self.config.ttl.as_secs(),
+            OutboundPush::Voip(_) => 0,
+        };
         let response = self
             .http
             .post(format!("{}/3/device/{token}", self.base_url(environment)))
@@ -509,6 +513,10 @@ mod tests {
         let seen = seen.0.lock().unwrap();
         assert_eq!(seen[0].1["apns-topic"], "nl.example.app.voip");
         assert_eq!(seen[0].1["apns-push-type"], "voip");
+        assert_eq!(
+            seen[0].1["apns-expiration"], "0",
+            "a call is tried once and never delivered late"
+        );
         assert_eq!(seen[0].2, json!({"call_id": "9"}));
     }
 

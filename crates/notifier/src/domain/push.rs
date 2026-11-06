@@ -99,6 +99,28 @@ fn context_title(message: &IncomingMessage, ctx: &ChannelContext) -> String {
     }
 }
 
+/// How long the phone rings, which the gateway's ring timeout also is. The app ends a call nobody answered after this.
+const RING_SECONDS: u64 = 30;
+
+/// The PushKit payload that rings the phone for the call `message` reports. It never carries message
+/// text. The caller's name is in it only for a channel whose delivery mode is exactly `standard`
+/// (the same allow-list as alerts); every other mode, including one this service has never heard of,
+/// gets a call without a name, and `private` tells the app to show it that way.
+pub fn compose_call(message: &IncomingMessage, ctx: &ChannelContext) -> Value {
+    let mut payload = serde_json::json!({
+        "type": "call",
+        "channel_id": message.channel_id,
+        "call_message_id": message.id,
+        "caller_id": message.author_id,
+        "private": !ctx.is_standard(),
+        "ring_seconds": RING_SECONDS,
+    });
+    if ctx.is_standard() {
+        payload["caller_name"] = Value::String(message.author_name.clone());
+    }
+    payload
+}
+
 /// The notification for `message`. `previews` is the recipient device's setting.
 pub fn compose(message: &IncomingMessage, ctx: &ChannelContext, previews: bool) -> AlertContent {
     let mut data = vec![
@@ -173,6 +195,50 @@ mod tests {
         let alert = compose(&dm, &ctx, true);
         assert_eq!(alert.title, "Alice");
         assert!(!alert.data.iter().any(|(key, _)| key == "guild_id"));
+    }
+
+    fn call_message() -> IncomingMessage {
+        message(json!({"type": 3, "guild_id": null, "content": "", "call": {"participants": ["7"]}}))
+    }
+
+    #[test]
+    fn a_standard_call_names_the_caller_and_nothing_else() {
+        let payload = compose_call(&call_message(), &standard());
+        assert_eq!(
+            payload,
+            json!({"type": "call", "channel_id": "10", "call_message_id": "100", "caller_id": "7",
+                   "private": false, "ring_seconds": 30, "caller_name": "Alice"})
+        );
+    }
+
+    #[test]
+    fn encrypted_and_unknown_modes_ring_without_a_name_a_place_or_text() {
+        for mode in ["ephemeral", "p2p", "e2ee", "", "Standard", "something-new"] {
+            let ctx = ChannelContext {
+                delivery_mode: mode.into(),
+                ..standard()
+            };
+            let payload = compose_call(&call_message(), &ctx);
+            let everything = payload.to_string();
+            for leaked in ["Alice", "general", "Test Guild"] {
+                assert!(!everything.contains(leaked), "{mode} leaked {leaked}");
+            }
+            assert_eq!(payload["private"], true, "{mode}");
+            assert!(payload.get("caller_name").is_none(), "{mode}");
+            assert_eq!(payload["channel_id"], "10", "the app still opens the call");
+        }
+    }
+
+    #[test]
+    fn a_call_payload_never_carries_message_text() {
+        let with_text = message(
+            json!({"type": 3, "guild_id": null, "content": "the launch code is 1234", "call": {"participants": ["7"]}}),
+        );
+        assert!(
+            !compose_call(&with_text, &standard())
+                .to_string()
+                .contains("launch code")
+        );
     }
 
     #[test]
