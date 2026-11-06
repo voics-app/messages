@@ -7,6 +7,7 @@ use contracts::{
     AdminStatsResponse, CallDto, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode,
     ReadStateDto, UpdateCallRequest,
 };
+use discordy_messages_application::MessageView;
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
 use discordy_messages_domain::{Call, InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
@@ -156,6 +157,16 @@ pub async fn update_call(
         .update_call
         .execute(channel_id, message_id, ended_at_ms, participants)
         .await?;
+    Ok(Json(single(&state, &view).await))
+}
+
+pub async fn get_message(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath((Id(channel_id), Id(message_id))): ApiPath<(Id, Id)>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let message = state.use_cases.get_message.execute(channel_id, message_id).await?;
+    let view = MessageView::without_reactions(message);
     Ok(Json(single(&state, &view).await))
 }
 

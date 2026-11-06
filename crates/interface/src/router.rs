@@ -61,6 +61,10 @@ pub fn router(state: AppState) -> Router {
     let internal = Router::new()
         .route("/channels/{channel_id}/messages", post(internal::create_message))
         .route(
+            "/channels/{channel_id}/messages/{message_id}",
+            get(internal::get_message),
+        )
+        .route(
             "/channels/{channel_id}/messages/{message_id}/call",
             patch(internal::update_call),
         )

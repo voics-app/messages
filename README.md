@@ -21,7 +21,8 @@ Internal, under `/internal/v1` (header `X-Internal-Token`):
 code 50160; `type` posts a system message: 1-2 and 4-5 group DM events, 3 call with `call`
 `{participants, ended_timestamp}`, 6 pin, 7 member join, 18 thread created with `thread_id`),
 `PATCH /channels/{id}/messages/{mid}/call` (records `ended_timestamp` and final `participants` of a
-call message), `GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
+call message), `GET /channels/{id}/messages/{mid}` (one stored message, used by api to snapshot a reported message),
+`GET /channels/{id}/last-message-id`, `GET /users/{id}/read-states`, `GET /admin/stats`.
 
 Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`. Metrics: `http_requests_total` and `http_request_duration_seconds` (method, route, status class), `db_query_duration_seconds` (db, operation), `messages_created_total`, `messages_edited_total`, `messages_deleted_total`, `kafka_produce_duration_seconds` and `kafka_produce_errors_total` (topic).
 
