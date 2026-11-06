@@ -415,7 +415,7 @@ mod tests {
         );
         rig.handler.handle(&envelope("e1", NOW_MS - 1000, json!({}))).await;
         settle().await;
-        assert_eq!(sent_to(&rig), vec!["phone", "tablet"]);
+        assert_eq!(sent_to(&rig), vec!["online", "phone", "tablet"]);
     }
 
     #[tokio::test]

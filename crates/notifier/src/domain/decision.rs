@@ -26,7 +26,9 @@ impl Level {
 pub struct Recipient {
     pub user_id: String,
     pub role_ids: Vec<String>,
-    /// The user holds a live gateway session: the app shows its own banner.
+    /// The user holds a live gateway session. It says nothing about the phone: a desktop can be
+    /// open, or the socket of a backgrounded app can linger, so it never holds back a message push.
+    /// The app drops the banner itself while it is in the foreground.
     pub online: bool,
     pub level: Level,
     pub muted: bool,
@@ -36,7 +38,6 @@ pub struct Recipient {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Skip {
-    Online,
     Muted,
     LevelNothing,
     NotMentioned,
@@ -45,7 +46,6 @@ pub enum Skip {
 impl Skip {
     pub const fn label(self) -> &'static str {
         match self {
-            Skip::Online => "online",
             Skip::Muted => "muted",
             Skip::LevelNothing => "level_nothing",
             Skip::NotMentioned => "not_mentioned",
@@ -61,7 +61,7 @@ pub enum Verdict {
 
 /// DMs, direct mentions, a mention of one of the recipient's roles and `@everyone` count as
 /// mentions unless the recipient suppressed them. `@here` only pings members who are online when
-/// it is sent, and a push recipient is by definition not online.
+/// it is sent, so a push never treats it as a mention.
 pub fn is_mentioned(message: &IncomingMessage, recipient: &Recipient) -> bool {
     if message.is_direct() || message.mentions.contains(&recipient.user_id) {
         return true;
@@ -78,9 +78,6 @@ pub fn is_mentioned(message: &IncomingMessage, recipient: &Recipient) -> bool {
 }
 
 pub fn decide(message: &IncomingMessage, recipient: &Recipient) -> Verdict {
-    if recipient.online {
-        return Verdict::Skip(Skip::Online);
-    }
     if recipient.muted {
         return Verdict::Skip(Skip::Muted);
     }
@@ -122,13 +119,13 @@ mod tests {
     }
 
     #[test]
-    fn a_live_session_wins_over_everything() {
+    fn a_live_session_does_not_hold_back_a_push() {
         let online = Recipient {
             online: true,
             ..recipient()
         };
         let ping = message(json!({"mentions": [{"id": "42"}]}));
-        assert_eq!(decide(&ping, &online), Verdict::Skip(Skip::Online));
+        assert_eq!(decide(&ping, &online), Verdict::Notify);
     }
 
     #[test]
