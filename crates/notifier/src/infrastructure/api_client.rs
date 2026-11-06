@@ -51,6 +51,32 @@ struct TargetBody {
     suppress_everyone: bool,
     suppress_roles: bool,
     tokens: Vec<TokenBody>,
+    #[serde(default)]
+    voip_tokens: Vec<VoipTokenBody>,
+}
+
+#[derive(Deserialize)]
+struct VoipTokenBody {
+    token: String,
+    environment: String,
+}
+
+impl VoipTokenBody {
+    /// A PushKit token is an APNs token: it never previews text and has no mention preference.
+    fn into_token(self) -> Option<DeviceToken> {
+        let environment = match self.environment.as_str() {
+            "production" => Environment::Production,
+            "sandbox" => Environment::Sandbox,
+            _ => return None,
+        };
+        Some(DeviceToken {
+            platform: Platform::Apns,
+            token: self.token,
+            environment,
+            previews: false,
+            only_mentions: false,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -108,6 +134,11 @@ impl From<TargetsBody> for ChannelTargets {
                         suppress_roles: target.suppress_roles,
                     },
                     tokens: target.tokens.into_iter().filter_map(TokenBody::into_token).collect(),
+                    voip_tokens: target
+                        .voip_tokens
+                        .into_iter()
+                        .filter_map(VoipTokenBody::into_token)
+                        .collect(),
                 })
                 .collect(),
         }
@@ -197,6 +228,10 @@ mod tests {
                         {"platform": "apns", "token": "abc", "environment": "sandbox", "previews": false, "only_mentions": true},
                         {"platform": "wns", "token": "x", "environment": "production", "previews": true},
                         {"platform": "fcm", "token": "f", "environment": "staging", "previews": true}
+                    ],
+                    "voip_tokens": [
+                        {"token": "voip1", "environment": "production"},
+                        {"token": "voip2", "environment": "staging"}
                     ]
                 }]
             }))
@@ -238,6 +273,17 @@ mod tests {
                 only_mentions: true
             }],
             "unknown platforms and environments are dropped"
+        );
+        assert_eq!(
+            target.voip_tokens,
+            vec![DeviceToken {
+                platform: Platform::Apns,
+                token: "voip1".into(),
+                environment: Environment::Production,
+                previews: false,
+                only_mentions: false
+            }],
+            "VoIP tokens are APNs tokens; an unknown environment is dropped"
         );
     }
 

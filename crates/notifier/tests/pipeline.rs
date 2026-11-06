@@ -47,10 +47,14 @@ async fn fake_api(log: Record, delivery_mode: &'static str) -> String {
     let phone = json!([{"platform": "apns", "token": "aa11", "environment": "sandbox", "previews": true}]);
     let store = json!([{"platform": "apns", "token": "bb22", "environment": "production", "previews": true}]);
     let dead = json!([{"platform": "apns", "token": "dead", "environment": "sandbox", "previews": true}]);
-    let body = json!({
+    let mut body = json!({
         "guild_id": "1", "guild_name": "Test Guild", "channel_name": "general", "delivery_mode": delivery_mode,
         "targets": [target("1", 0, phone), target("2", 0, store), target("3", 2, dead.clone()), target("4", 0, dead)]
     });
+    // PushKit tokens: user 1 has a sandbox one, user 2 a production one, user 4 a dead one.
+    body["targets"][0]["voip_tokens"] = json!([{"token": "cc33", "environment": "sandbox"}]);
+    body["targets"][1]["voip_tokens"] = json!([{"token": "dd44", "environment": "production"}]);
+    body["targets"][3]["voip_tokens"] = json!([{"token": "dead", "environment": "sandbox"}]);
     async fn targets(State((_, body)): State<(Record, Value)>, Path(_): Path<String>) -> axum::Json<Value> {
         axum::Json(body)
     }
@@ -74,6 +78,20 @@ async fn fake_apns(host: &'static str, log: Record) -> String {
         headers: HeaderMap,
         axum::Json(body): axum::Json<Value>,
     ) -> (StatusCode, String) {
+        if headers["apns-push-type"] == "voip" {
+            log.add(format!(
+                "{host} {token} voip topic={} expiration={} type={} name={} text={}",
+                headers["apns-topic"].to_str().unwrap(),
+                headers["apns-expiration"].to_str().unwrap(),
+                body["type"].as_str().unwrap(),
+                body["caller_name"].as_str().unwrap_or("-"),
+                body.get("content").is_some()
+            ));
+            if token == "dead" {
+                return (StatusCode::GONE, json!({"reason": "Unregistered"}).to_string());
+            }
+            return (StatusCode::OK, String::new());
+        }
         log.add(format!(
             "{host} {token} topic={} title={} body={}",
             headers["apns-topic"].to_str().unwrap(),
@@ -110,7 +128,29 @@ fn envelope(content: &str) -> Envelope {
     .unwrap()
 }
 
+fn call_envelope() -> Envelope {
+    serde_json::from_value(json!({
+        "id": "evt-call", "type": "MESSAGE_CREATE", "v": 1,
+        "occurred_at": time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "guild_id": null, "channel_id": "10", "target_user_ids": null,
+        "data": {
+            "id": "101", "channel_id": "10", "guild_id": null,
+            "author": {"id": "7", "username": "alice", "global_name": "Alice"},
+            "content": "top secret", "timestamp": "2026-11-05T10:00:00Z", "edited_timestamp": null,
+            "tts": false, "mention_everyone": false, "mentions": [], "mention_roles": [],
+            "attachments": [], "embeds": [], "pinned": false, "type": 3, "flags": 0, "components": [],
+            "call": {"participants": ["7"]}
+        }
+    }))
+    .unwrap()
+}
+
 async fn run(delivery_mode: &'static str, content: &str) -> Vec<String> {
+    run_event(delivery_mode, envelope(content), 3).await
+}
+
+async fn run_event(delivery_mode: &'static str, event: Envelope, lines_wanted: usize) -> Vec<String> {
     let log = Record::default();
     let api_url = fake_api(log.clone(), delivery_mode).await;
     let production = fake_apns("production", log.clone()).await;
@@ -155,10 +195,10 @@ async fn run(delivery_mode: &'static str, content: &str) -> Vec<String> {
             .unwrap()
         }),
     );
-    handler.handle(&envelope(content)).await;
+    handler.handle(&event).await;
     for _ in 0..100 {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        if log.lines().len() >= 3 {
+        if log.lines().len() >= lines_wanted {
             break;
         }
     }
@@ -188,5 +228,30 @@ async fn an_encrypted_channel_sends_only_the_generic_text_through_the_whole_pipe
     for line in lines.iter().filter(|line| !line.starts_with("forget")) {
         assert!(line.ends_with("title=New message body=-"), "{line}");
         assert!(!line.contains("hunter2") && !line.contains("Alice"), "{line}");
+    }
+}
+
+#[tokio::test]
+async fn a_dm_call_rings_the_voip_devices_on_the_voip_topic_and_a_dead_voip_token_is_removed() {
+    let lines = run_event("standard", call_envelope(), 4).await;
+    assert_eq!(
+        lines,
+        vec![
+            "forget dead",
+            "production dd44 voip topic=nl.example.app.voip expiration=0 type=call name=Alice text=false",
+            "sandbox cc33 voip topic=nl.example.app.voip expiration=0 type=call name=Alice text=false",
+            "sandbox dead voip topic=nl.example.app.voip expiration=0 type=call name=Alice text=false",
+        ],
+        "only PushKit tokens ring; the alert tokens get nothing for a call"
+    );
+}
+
+#[tokio::test]
+async fn an_encrypted_dm_call_rings_without_the_callers_name_or_any_text() {
+    let lines = run_event("ephemeral", call_envelope(), 4).await;
+    assert!(!lines.is_empty());
+    for line in lines.iter().filter(|line| !line.starts_with("forget")) {
+        assert!(line.contains("name=- text=false"), "{line}");
+        assert!(!line.contains("Alice") && !line.contains("secret"), "{line}");
     }
 }

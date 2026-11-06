@@ -9,6 +9,14 @@ const FLAG_EPHEMERAL: u32 = 1 << 6;
 /// Plain messages and replies are the user-written kinds worth a push.
 const KIND_DEFAULT: u8 = 0;
 const KIND_REPLY: u8 = 19;
+/// A system message that reports a DM call; `author_id` is the caller.
+const KIND_CALL: u8 = 3;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallInfo {
+    pub participants: Vec<String>,
+    pub ended: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncomingMessage {
@@ -23,6 +31,8 @@ pub struct IncomingMessage {
     pub mention_roles: Vec<String>,
     pub mention_everyone: bool,
     pub mention_here: bool,
+    /// Who is in the call a type 3 message reports, and whether it is over already.
+    pub call: Option<CallInfo>,
     flags: u32,
     kind: u8,
 }
@@ -47,6 +57,10 @@ impl IncomingMessage {
             mention_roles: dto.mention_roles,
             mention_everyone: dto.mention_everyone,
             mention_here: dto.mention_here,
+            call: dto.call.map(|call| CallInfo {
+                participants: call.participants,
+                ended: call.ended_timestamp.is_some(),
+            }),
             flags: dto.flags,
             kind: dto.kind,
         }
@@ -57,6 +71,15 @@ impl IncomingMessage {
     pub fn is_pushable(&self) -> bool {
         matches!(self.kind, KIND_DEFAULT | KIND_REPLY)
             && self.flags & (FLAG_SUPPRESS_NOTIFICATIONS | FLAG_EPHEMERAL) == 0
+    }
+
+    /// A call that has just started in a DM: the system message of a call that is still running.
+    /// It is the one event that rings a closed app (a PushKit push); it is never an alert.
+    pub fn is_call_ring(&self) -> bool {
+        self.kind == KIND_CALL
+            && self.flags & FLAG_EPHEMERAL == 0
+            && self.guild_id.is_none()
+            && self.call.as_ref().is_some_and(|call| !call.ended)
     }
 
     pub fn is_direct(&self) -> bool {
@@ -108,6 +131,21 @@ mod tests {
         assert!(!message(json!({"flags": 64})).is_pushable());
         assert!(!message(json!({"type": 7})).is_pushable());
         assert!(!message(json!({"type": 3})).is_pushable());
+    }
+
+    #[test]
+    fn a_running_dm_call_rings_and_an_ended_one_or_a_server_message_does_not() {
+        let running = json!({"type": 3, "guild_id": null, "call": {"participants": ["7"]}});
+        assert!(message(running.clone()).is_call_ring());
+        assert!(!message(running.clone()).is_pushable(), "a call is never an alert");
+        let ended = json!({"type": 3, "guild_id": null, "call": {"participants": ["7"], "ended_timestamp": "2026-11-05T10:05:00Z"}});
+        assert!(!message(ended).is_call_ring());
+        assert!(!message(json!({"type": 3, "guild_id": "1", "call": {"participants": ["7"]}})).is_call_ring());
+        assert!(!message(json!({"type": 3, "guild_id": null})).is_call_ring());
+        assert!(!message(json!({"type": 0, "guild_id": null, "call": {"participants": ["7"]}})).is_call_ring());
+        assert!(
+            !message(json!({"type": 3, "guild_id": null, "flags": 64, "call": {"participants": ["7"]}})).is_call_ring()
+        );
     }
 
     #[test]
