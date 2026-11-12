@@ -19,8 +19,14 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+serde.workspace = true
+async-trait.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
