@@ -67,6 +67,22 @@ impl Dispatcher {
     }
 }
 
+impl Dispatcher {
+    /// Like `submit` for pushes a person asked for: waits up to `patience` for room in the queue
+    /// instead of dropping at once, so a broadcast larger than the queue is paced by the same
+    /// bounded queue and in-flight cap, never around them.
+    pub async fn submit_waiting(&self, token: DeviceToken, push: OutboundPush, patience: Duration) -> Submitted {
+        let provider = token.platform.label();
+        match tokio::time::timeout(patience, self.queue.send(Job { token, push })).await {
+            Ok(Ok(())) => Submitted::Queued,
+            _ => {
+                metrics::counter!("notifier_pushes_total", "provider" => provider, "outcome" => "dropped").increment(1);
+                Submitted::Dropped
+            }
+        }
+    }
+}
+
 async fn pump(
     config: DispatchConfig,
     mut jobs: mpsc::Receiver<Job>,

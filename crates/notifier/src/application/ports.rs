@@ -70,6 +70,22 @@ pub trait TargetDirectory: Send + Sync {
     async fn targets(&self, channel_id: &str, author_id: &str) -> Result<ChannelTargets, PortError>;
 }
 
+/// One page of devices of the whole audience, in user id order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevicePage {
+    pub devices: Vec<DeviceToken>,
+    /// Pass it back to get the next page; `None` on the last one.
+    pub next_after: Option<String>,
+}
+
+/// Where a notification sent by hand finds its devices: one user's, or everyone's in pages.
+#[async_trait]
+pub trait DeviceDirectory: Send + Sync {
+    /// The live notification tokens of one user (none for an unknown user).
+    async fn user_devices(&self, user_id: &str) -> Result<Vec<DeviceToken>, PortError>;
+    async fn device_page(&self, after: Option<&str>) -> Result<DevicePage, PortError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendError {
     /// The provider says this token will never work again: remove it.
