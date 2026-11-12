@@ -322,7 +322,7 @@ mod tests {
         ManualRequest {
             target,
             title: "Maintenance".into(),
-            body: "Voics is back at 22:00.".into(),
+            body: "Back at 22:00.".into(),
             dry_run: false,
             actor: Some("owner@example.com".into()),
         }
@@ -347,7 +347,7 @@ mod tests {
         };
         assert_eq!(
             (alert.title.as_str(), alert.body.as_str()),
-            ("Maintenance", "Voics is back at 22:00.")
+            ("Maintenance", "Back at 22:00.")
         );
         assert!(alert.data.contains(&("type".into(), "manual".into())));
     }
