@@ -128,15 +128,6 @@ impl EventHandler {
                                 .increment(1);
                             continue;
                         }
-                        if token.platform != Platform::Apns {
-                            metrics::counter!(
-                                "notifier_pushes_total",
-                                "provider" => token.platform.label(),
-                                "outcome" => "unsupported"
-                            )
-                            .increment(1);
-                            continue;
-                        }
                         let alert = compose(&message, &found.context, token.previews);
                         if self.dispatcher.submit(token.clone(), OutboundPush::Alert(alert)) == Submitted::Dropped {
                             tracing::debug!(channel = %message.channel_id, "push queue full, dropped");
@@ -176,7 +167,9 @@ impl EventHandler {
             if verdict != "call_ring" {
                 continue;
             }
-            for token in &target.voip_tokens {
+            // Android has no PushKit: its ring is a data-only FCM message to the ordinary token.
+            let android = target.tokens.iter().filter(|token| token.platform == Platform::Fcm);
+            for token in target.voip_tokens.iter().chain(android) {
                 if self
                     .dispatcher
                     .submit(token.clone(), OutboundPush::Voip(payload.clone()))
@@ -496,7 +489,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fcm_tokens_are_skipped_until_a_sender_exists() {
+    async fn fcm_tokens_get_the_same_alert_as_apns_tokens() {
         let fcm = DeviceToken {
             platform: Platform::Fcm,
             ..apns("android", true)
@@ -511,7 +504,63 @@ mod tests {
         );
         rig.handler.handle(&envelope("e1", NOW_MS, json!({}))).await;
         settle().await;
-        assert_eq!(sent_to(&rig), vec!["phone"]);
+        assert_eq!(sent_to(&rig), vec!["android", "phone"]);
+        let sent = rig.sender.sent.lock().unwrap();
+        let alerts: Vec<_> = sent
+            .iter()
+            .map(|(token, push)| match push {
+                OutboundPush::Alert(alert) => (token.platform, alert.body.clone()),
+                OutboundPush::Voip(_) => unreachable!(),
+            })
+            .collect();
+        assert!(alerts.iter().all(|(_, body)| body == "hello there"));
+        assert!(alerts.iter().any(|(platform, _)| *platform == Platform::Fcm));
+    }
+
+    #[tokio::test]
+    async fn an_fcm_device_obeys_its_own_previews_and_only_mentions_settings() {
+        let fcm = |token: &str, previews, only_mentions| DeviceToken {
+            platform: Platform::Fcm,
+            previews,
+            only_mentions,
+            ..apns(token, true)
+        };
+        let rig = rig(
+            vec![Target {
+                recipient: recipient("1"),
+                tokens: vec![fcm("quiet", false, false), fcm("pings", true, true)],
+                voip_tokens: Vec::new(),
+            }],
+            "standard",
+        );
+        rig.handler.handle(&envelope("e1", NOW_MS, json!({}))).await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["quiet"]);
+        let sent = rig.sender.sent.lock().unwrap();
+        match &sent[0].1 {
+            OutboundPush::Alert(alert) => assert_eq!(alert.body, "New message"),
+            OutboundPush::Voip(_) => unreachable!(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_rings_android_through_its_fcm_token_and_ios_through_voip_only() {
+        let fcm = DeviceToken {
+            platform: Platform::Fcm,
+            ..apns("android", true)
+        };
+        let both = Target {
+            recipient: recipient("1"),
+            tokens: vec![fcm, apns("iphone-alert", true)],
+            voip_tokens: vec![apns("iphone-voip", false)],
+        };
+        let rig = rig(vec![both], "standard");
+        rig.handler.handle(&call_envelope("c1", NOW_MS, json!({}))).await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["android", "iphone-voip"]);
+        for (_, push) in rig.sender.sent.lock().unwrap().iter() {
+            assert!(matches!(push, OutboundPush::Voip(_)), "no alert for a ring");
+        }
     }
 
     #[tokio::test]

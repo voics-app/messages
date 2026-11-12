@@ -78,6 +78,8 @@ pub enum SendError {
     Retry { reason: String, after: Option<Duration> },
     /// Not worth retrying (bad request, bad credentials).
     Failed(String),
+    /// No sender is configured for the token's provider: nothing was tried.
+    Unsupported(String),
 }
 
 #[async_trait]

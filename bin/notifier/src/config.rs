@@ -20,17 +20,25 @@ pub enum ApnsEnvironment {
 }
 
 #[derive(Debug, Clone)]
+pub struct ApnsCredentials {
+    /// The PKCS#8 PEM text of the `.p8` key.
+    pub key_pem: String,
+    pub key_id: String,
+    pub team_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub log_level: String,
     pub bind_addr: SocketAddr,
     pub kafka_brokers: Vec<String>,
     pub api_internal_url: String,
     pub internal_service_token: String,
-    /// The PKCS#8 PEM text of the `.p8` key.
-    pub apns_key_pem: String,
-    pub apns_key_id: String,
-    pub apns_team_id: String,
+    /// APNs credentials; `None` when none of them is set (iOS tokens are then skipped).
+    pub apns: Option<ApnsCredentials>,
     pub apns_topic: String,
+    /// The whole Firebase service-account JSON; `None` skips Android tokens.
+    pub fcm_service_account: Option<String>,
     /// Forces every token to one APNs host; unset sends each token to the host it was issued for.
     pub apns_environment: Option<ApnsEnvironment>,
     pub queue_capacity: usize,
@@ -137,6 +145,46 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             }
         }
     }
+
+    /// APNs is optional as a whole: no variable set means no APNs. A partial setup is reported.
+    fn apns(&mut self, read_file: &dyn Fn(&str) -> std::io::Result<String>) -> Option<ApnsCredentials> {
+        let any = ["APNS_KEY_FILE", "APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID"]
+            .iter()
+            .any(|name| self.value(name).is_some());
+        if !any {
+            return None;
+        }
+        let key_pem = self.apns_key(read_file);
+        Some(ApnsCredentials {
+            key_pem,
+            key_id: self.required("APNS_KEY_ID"),
+            team_id: self.required("APNS_TEAM_ID"),
+        })
+    }
+
+    /// FCM is optional: `NOTIFIER_FCM_SERVICE_ACCOUNT` holds the whole JSON, or
+    /// `FCM_SERVICE_ACCOUNT_FILE` names a mounted file.
+    fn fcm(&mut self, read_file: &dyn Fn(&str) -> std::io::Result<String>) -> Option<String> {
+        let json = match self.value("FCM_SERVICE_ACCOUNT_FILE") {
+            Some(path) => match read_file(&path) {
+                Ok(text) => text,
+                Err(error) => {
+                    self.problem(format!("FCM_SERVICE_ACCOUNT_FILE ({path}) cannot be read: {error}"));
+                    return None;
+                }
+            },
+            None => self.value("NOTIFIER_FCM_SERVICE_ACCOUNT")?,
+        };
+        match serde_json::from_str::<serde_json::Value>(&json) {
+            Ok(value) if value["project_id"].is_string() && value["private_key"].is_string() => Some(json),
+            _ => {
+                self.problem(
+                    "the FCM service account must be the JSON key file with project_id and private_key".to_owned(),
+                );
+                None
+            }
+        }
+    }
 }
 
 impl Config {
@@ -171,10 +219,9 @@ impl Config {
             kafka_brokers: reader.list("KAFKA_BROKERS"),
             api_internal_url: reader.url("API_INTERNAL_URL"),
             internal_service_token: reader.required("INTERNAL_SERVICE_TOKEN"),
-            apns_key_pem: reader.apns_key(read_file),
-            apns_key_id: reader.required("APNS_KEY_ID"),
-            apns_team_id: reader.required("APNS_TEAM_ID"),
+            apns: reader.apns(read_file),
             apns_topic: reader.optional("APNS_TOPIC", DEFAULT_APNS_TOPIC),
+            fcm_service_account: reader.fcm(read_file),
             apns_environment,
             queue_capacity,
             max_in_flight,
@@ -230,22 +277,48 @@ mod tests {
         assert_eq!(config.max_in_flight, 100);
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.kafka_brokers, vec!["redpanda:9092"]);
-        assert!(config.apns_key_pem.contains("PRIVATE KEY"));
+        assert!(config.apns.unwrap().key_pem.contains("PRIVATE KEY"));
+        assert_eq!(config.fcm_service_account, None);
     }
 
     #[test]
     fn every_problem_is_reported_at_once() {
         let error = load(&HashMap::new(), PEM).unwrap_err().to_string();
-        for name in [
-            "KAFKA_BROKERS",
-            "API_INTERNAL_URL",
-            "INTERNAL_SERVICE_TOKEN",
-            "APNS_KEY_FILE",
-            "APNS_KEY_ID",
-            "APNS_TEAM_ID",
-        ] {
+        for name in ["KAFKA_BROKERS", "API_INTERNAL_URL", "INTERNAL_SERVICE_TOKEN"] {
             assert!(error.contains(name), "{error}");
         }
+        assert!(!error.contains("APNS"), "APNs is optional: {error}");
+    }
+
+    #[test]
+    fn a_partial_apns_setup_is_reported() {
+        let mut vars = base();
+        vars.remove("APNS_KEY_ID");
+        vars.remove("APNS_TEAM_ID");
+        let error = load(&vars, PEM).unwrap_err().to_string();
+        assert!(error.contains("APNS_KEY_ID"), "{error}");
+        assert!(error.contains("APNS_TEAM_ID"), "{error}");
+    }
+
+    #[test]
+    fn apns_may_be_absent_and_fcm_alone_is_enough() {
+        let mut vars = base();
+        for name in ["APNS_KEY_FILE", "APNS_KEY_ID", "APNS_TEAM_ID"] {
+            vars.remove(name);
+        }
+        assert!(load(&vars, PEM).unwrap().apns.is_none());
+        let account = r#"{"project_id":"p","private_key":"k","client_email":"e"}"#;
+        vars.insert("NOTIFIER_FCM_SERVICE_ACCOUNT", account);
+        assert_eq!(load(&vars, PEM).unwrap().fcm_service_account.as_deref(), Some(account));
+    }
+
+    #[test]
+    fn a_malformed_fcm_service_account_is_reported_without_echoing_it() {
+        let mut vars = base();
+        vars.insert("NOTIFIER_FCM_SERVICE_ACCOUNT", "super-secret-not-json");
+        let error = load(&vars, PEM).unwrap_err().to_string();
+        assert!(error.contains("FCM service account"), "{error}");
+        assert!(!error.contains("super-secret"), "{error}");
     }
 
     #[test]
