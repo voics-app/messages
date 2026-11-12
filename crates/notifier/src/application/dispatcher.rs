@@ -112,6 +112,11 @@ async fn deliver(config: DispatchConfig, job: Job, sender: &dyn PushSender, regi
                 }
                 return;
             }
+            Err(SendError::Unsupported(reason)) => {
+                tracing::debug!(provider, %reason, "no sender for this provider, push skipped");
+                outcome(provider, "unsupported");
+                return;
+            }
             Err(SendError::Failed(reason)) => {
                 tracing::warn!(provider, %reason, "push failed");
                 outcome(provider, "failed");

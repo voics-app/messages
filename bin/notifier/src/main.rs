@@ -11,10 +11,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use notifier::application::{DispatchConfig, Dispatcher, EventHandler, HandlerConfig};
+use notifier::application::{DispatchConfig, Dispatcher, EventHandler, HandlerConfig, PushSender};
 use notifier::infrastructure::api_client::ApiClient;
 use notifier::infrastructure::apns::{ApnsConfig, ApnsSender};
+use notifier::infrastructure::fcm::{FcmConfig, FcmSender};
 use notifier::infrastructure::kafka::MessageTopic;
+use notifier::infrastructure::routing::RoutingSender;
 use tracing_subscriber::EnvFilter;
 
 use config::{ApnsEnvironment, Config};
@@ -63,17 +65,34 @@ async fn shutdown_signal() {
 
 async fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let metrics = PrometheusBuilder::new().install_recorder()?;
-    let mut apns = ApnsConfig::new(
-        config.apns_key_pem.clone(),
-        config.apns_key_id.clone(),
-        config.apns_team_id.clone(),
-        config.apns_topic.clone(),
-    );
-    apns.environment_override = config.apns_environment.map(|environment| match environment {
-        ApnsEnvironment::Production => notifier::application::Environment::Production,
-        ApnsEnvironment::Sandbox => notifier::application::Environment::Sandbox,
-    });
-    let sender = Arc::new(ApnsSender::new(apns)?);
+    // Each provider is optional: one without credentials only skips its own tokens.
+    let apns: Option<Arc<dyn PushSender>> = match &config.apns {
+        Some(credentials) => {
+            let mut apns = ApnsConfig::new(
+                credentials.key_pem.clone(),
+                credentials.key_id.clone(),
+                credentials.team_id.clone(),
+                config.apns_topic.clone(),
+            );
+            apns.environment_override = config.apns_environment.map(|environment| match environment {
+                ApnsEnvironment::Production => notifier::application::Environment::Production,
+                ApnsEnvironment::Sandbox => notifier::application::Environment::Sandbox,
+            });
+            Some(Arc::new(ApnsSender::new(apns)?))
+        }
+        None => {
+            tracing::warn!("APNs is not configured: iOS tokens are skipped");
+            None
+        }
+    };
+    let fcm: Option<Arc<dyn PushSender>> = match &config.fcm_service_account {
+        Some(json) => Some(Arc::new(FcmSender::new(FcmConfig::new(json.clone()))?)),
+        None => {
+            tracing::warn!("FCM is not configured: Android tokens are skipped");
+            None
+        }
+    };
+    let sender = Arc::new(RoutingSender::new(apns, fcm));
     let api = Arc::new(ApiClient::new(
         &config.api_internal_url,
         config.internal_service_token.clone(),

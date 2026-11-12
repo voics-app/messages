@@ -1,6 +1,6 @@
 [package]
 name = "discordy-messages-notifier"
-description = "Voics notifier: decides who gets a push for a new message and sends it through APNs"
+description = "Voics notifier: decides who gets a push for a new message and sends it through APNs and FCM"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -29,6 +29,7 @@ tokio = { workspace = true, features = ["test-util"] }
 axum = "0.8"
 p256 = { version = "0.13", features = ["pkcs8", "pem", "ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = { version = "0.9", features = ["pem"] }
 
 [lints]
 workspace = true
