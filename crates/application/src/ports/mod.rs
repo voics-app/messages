@@ -11,6 +11,7 @@ mod ids;
 mod messages;
 mod notification_recipients;
 mod pins;
+mod polls;
 mod reactions;
 mod read_states;
 mod search;
@@ -29,6 +30,9 @@ pub use notification_recipients::{
     NotificationRecipient, NotificationRecipientPage, NotificationRecipients, RecipientQuery,
 };
 pub use pins::{Pin, PinRepository};
+pub use polls::{
+    PollDueEntry, PollKey, PollRepository, PollSnapshotState, PollStoreError, PollStoreResult, VoteCommand,
+};
 pub use reactions::ReactionRepository;
 pub use read_states::ReadStateRepository;
 pub use search::{BackfillState, Checkpoint, IndexOp, PinnedFilter, SearchHit, SearchIndex, SearchPage, SearchRequest};

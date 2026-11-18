@@ -4,6 +4,7 @@ mod activity;
 mod messages;
 mod migrations;
 mod pins;
+mod polls;
 mod reactions;
 mod read_states;
 mod rows;
@@ -20,6 +21,7 @@ pub use activity::ScyllaActivityRepository;
 pub use messages::ScyllaMessageRepository;
 pub use migrations::migrate;
 pub use pins::ScyllaPinRepository;
+pub use polls::ScyllaPollRepository;
 pub use reactions::ScyllaReactionRepository;
 pub use read_states::ScyllaReadStateRepository;
 
