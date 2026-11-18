@@ -8,7 +8,7 @@ use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::value::CqlTimestamp;
 
-use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, id, snowflake};
+use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, attachment_udt, id, snowflake};
 use super::{execute, fetch_all, prepare};
 
 pub struct ScyllaMessageRepository {
@@ -46,7 +46,7 @@ impl ScyllaMessageRepository {
             .await?,
             update_content: prepare(
                 s,
-                "UPDATE messages SET content = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
+                "UPDATE messages SET content = ?, attachments = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
                  mention_everyone = ?, mention_here = ?, edited_at = ?, call_participants = ?, call_ended_at = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
             )
             .await?,
@@ -107,6 +107,7 @@ impl MessageRepository for ScyllaMessageRepository {
             &self.update_content,
             (
                 &message.content,
+                message.attachments.iter().map(attachment_udt).collect::<Vec<_>>(),
                 format!("[{}]", message.embeds.join(",")),
                 message.flags as i32,
                 message.mentions.users.iter().copied().map(id).collect::<Vec<_>>(),

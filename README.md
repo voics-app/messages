@@ -15,6 +15,18 @@ Public, under `/api/v1` (Bearer JWT or Bot token):
 `GET /channels/{id}/pins`, `PUT|DELETE /channels/{id}/pins/{mid}` (pinning also posts the type 6 system message),
 `POST /channels/{id}/attachments`.
 
+Creation stores `tts` (default false); `tts: true` requires `SEND_TTS_MESSAGES` alongside
+the usual send permissions. History and MESSAGE_CREATE/MESSAGE_UPDATE carry the saved value.
+Internal callers enforce that permission before relaying; system messages always have TTS off.
+Migration `0007_message_tts` adds the nullable column; older rows read as false.
+
+Authors can PATCH `attachments: [{id, description?, flags?}]` to change existing files' alt
+text or spoiler state. Missing files/fields remain unchanged; `description: null` clears alt
+text. Only IS_SPOILER (8) is changed by `flags`; explicit zero clears it, including on files
+named `SPOILER_*`. Object keys and signed URLs remain intact. Duplicate/unknown IDs, more than
+10 edits, alt text over 1024 characters, and attempts to change immutable file fields are
+rejected atomically. Attachment metadata changes emit MESSAGE_UPDATE and set the edit timestamp.
+
 Internal, under `/internal/v1` (header `X-Internal-Token`):
 `POST /channels/{id}/messages` (bot, webhook and interaction messages; body `author_id`, `content`,
 `embeds`, `components`; skips the user permission check, still refuses non-standard channels with 409

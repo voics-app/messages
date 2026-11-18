@@ -41,6 +41,7 @@ pub struct CreateMessageCommand {
     pub channel_id: ChannelId,
     pub author_id: UserId,
     pub content: String,
+    pub tts: bool,
     pub nonce: Option<String>,
     pub attachments: Vec<AttachmentReference>,
     pub embeds: Vec<String>,
@@ -80,6 +81,18 @@ pub struct CreateMessage {
     unfurl: Arc<UnfurlLinks>,
 }
 
+fn ensure_tts_permission(access: &ChannelAccess, tts: bool) -> Result<(), DomainError> {
+    if tts
+        && !access
+            .permissions
+            .has(discordy_messages_domain::Permissions::SEND_TTS_MESSAGES)
+    {
+        Err(DomainError::MissingPermissions)
+    } else {
+        Ok(())
+    }
+}
+
 impl CreateMessage {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
@@ -100,7 +113,8 @@ impl CreateMessage {
         }
         let with_attachments = !command.attachments.is_empty();
         let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
-            a.ensure_can_send(with_attachments)
+            a.ensure_can_send(with_attachments)?;
+            ensure_tts_permission(a, command.tts)
         })
         .await?;
         self.store(&access, command, None).await
@@ -155,7 +169,8 @@ impl CreateMessage {
         };
         let with_attachments = !snapshot.attachments.is_empty() || !command.attachments.is_empty();
         let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
-            a.ensure_can_send(with_attachments)
+            a.ensure_can_send(with_attachments)?;
+            ensure_tts_permission(a, command.tts)
         })
         .await?;
         // Files live under the channel of the message that owns them.
@@ -257,6 +272,7 @@ impl CreateMessage {
         }
         let draft = MessageDraft {
             content: command.content.clone(),
+            tts: command.tts,
             attachments: self
                 .resolve_attachments(command.channel_id, &command.attachments)
                 .await?,

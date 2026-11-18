@@ -36,6 +36,15 @@ pub struct Attachment {
     pub flags: u32,
 }
 
+/// Changes to an existing attachment, never to its object identity or file bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentMetadataEdit {
+    pub id: AttachmentId,
+    /// Missing retains alt text; present null clears it.
+    pub description: Option<Option<String>>,
+    pub flags: Option<u32>,
+}
+
 impl Attachment {
     pub fn is_spoiler(&self) -> bool {
         self.flags & ATTACHMENT_FLAG_SPOILER != 0

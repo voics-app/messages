@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, ForwardSource};
+use discordy_messages_domain::attachment::AttachmentMetadataEdit;
 use discordy_messages_domain::{FLAG_SUPPRESS_NOTIFICATIONS, HistoryCursor, MessageEdit, PageLimit};
 use serde::Deserialize;
 use serde_json::Value;
@@ -105,6 +106,7 @@ pub async fn create(
         channel_id,
         author_id: caller.user_id,
         content: body.content.unwrap_or_default(),
+        tts: body.tts,
         nonce: nonce_text(body.nonce)?,
         attachments: body
             .attachments
@@ -138,6 +140,21 @@ pub async fn edit(
 ) -> Result<Json<MessageDto>, ApiError> {
     let edit = MessageEdit {
         content: body.content,
+        attachments: body
+            .attachments
+            .map(|attachments| {
+                attachments
+                    .into_iter()
+                    .map(|attachment| {
+                        Ok(AttachmentMetadataEdit {
+                            id: parse_id("attachments.id", &attachment.id)?,
+                            description: attachment.description,
+                            flags: attachment.flags,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()
+            })
+            .transpose()?,
         embeds: body.embeds.map(|embeds| embeds.iter().map(Value::to_string).collect()),
         flags: body.flags,
     };

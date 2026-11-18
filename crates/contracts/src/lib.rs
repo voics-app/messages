@@ -250,7 +250,7 @@ pub struct AttachmentDto {
     pub height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
-    /// `AttachmentFlags` bit set; omitted when zero.
+    /// `AttachmentFlags` bit set; explicit zero overrides a SPOILER_ filename.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub flags: Option<u32>,
 }
@@ -273,6 +273,8 @@ pub struct ReactionDto {
 pub struct CreateMessageRequest {
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub tts: bool,
     #[serde(default)]
     pub nonce: Option<Value>,
     #[serde(default)]
@@ -344,6 +346,28 @@ pub struct EditMessageRequest {
     /// Only SUPPRESS_EMBEDS (4) is honoured.
     #[serde(default)]
     pub flags: Option<u32>,
+    #[serde(default)]
+    pub attachments: Option<Vec<AttachmentMetadataEditDto>>,
+}
+
+/// Partial metadata changes for one existing attachment. Files cannot be replaced here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachmentMetadataEditDto {
+    pub id: String,
+    /// Missing retains alt text; null clears it.
+    #[serde(
+        default,
+        deserialize_with = "present_description",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u32>,
+}
+
+fn present_description<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 /// `POST /channels/{id}/messages/bulk-delete`.
@@ -436,6 +460,8 @@ pub struct ChannelRoutingResponse {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalCreateMessageRequest {
     pub author_id: String,
+    #[serde(default)]
+    pub tts: bool,
     #[serde(default)]
     pub webhook_id: Option<String>,
     #[serde(default)]
