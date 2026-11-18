@@ -87,7 +87,11 @@ impl ChannelAccessProvider for HttpChannelAccess {
 
     async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
         self.cache.invalidate(&(channel_id, user_id)).await;
-        self.access(channel_id, user_id).await
+        // Invalidating does not cancel an in-flight coalesced lookup. A dispatch
+        // authorization check must observe a new request after its durable claim.
+        self.fetch(channel_id, user_id)
+            .await
+            .map_err(AccessError::Unavailable)?
     }
 
     async fn channel(&self, channel_id: ChannelId) -> Result<ChannelAccess, AccessError> {

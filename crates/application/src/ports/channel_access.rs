@@ -33,8 +33,9 @@ pub trait ChannelAccessProvider: Send + Sync {
     /// made by webhooks, which are not members. The permissions are empty.
     async fn channel(&self, channel_id: ChannelId) -> Result<ChannelAccess, AccessError>;
 
-    /// Like [`access`](Self::access) but never answered from a cache. Used to double-check a
-    /// delivery mode conflict: a user may have switched the chat back to Standard moments ago.
+    /// Like [`access`](Self::access), but neither cached nor coalesced with an older request.
+    /// Scheduled dispatch uses this after its durable claim. Uncached adapters can use
+    /// the default; adapters with any caching/coalescing must override it.
     async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
         self.access(channel_id, user_id).await
     }
