@@ -68,7 +68,6 @@ impl ScheduledMessages {
     }
 
     pub async fn get(&self, address: ScheduleAddress) -> AppResult<ScheduledMessage> {
-        self.reconcile_author(address.key.author_id).await?;
         let job = self.owned(address).await?;
         if job.status == ScheduledStatus::Preparing {
             return Err(PortError::new("schedule acceptance is incomplete; retry the original request").into());
@@ -80,7 +79,6 @@ impl ScheduledMessages {
         if !(1..=SCHEDULE_PAGE_SIZE).contains(&query.limit) {
             return Err(DomainError::invalid("limit", "must be 1..100").into());
         }
-        self.reconcile_author(query.author_id).await?;
         query.now_ms = self.ports.clock.now_unix_ms();
         Ok(self.ports.journal.list(query).await?)
     }

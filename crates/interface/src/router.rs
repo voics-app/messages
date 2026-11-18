@@ -15,11 +15,11 @@ pub fn router(state: AppState) -> Router {
     let public = Router::new()
         .route(
             "/channels/{channel_id}/messages/scheduled",
-            get(scheduled::list).post(scheduled::create),
+            get(scheduled::inspect_list).post(scheduled::create),
         )
         .route(
             "/channels/{channel_id}/messages/scheduled/{schedule_id}",
-            get(scheduled::get).patch(scheduled::edit).delete(scheduled::cancel),
+            get(scheduled::inspect).patch(scheduled::edit).delete(scheduled::cancel),
         )
         .route("/guilds/{guild_id}/messages/search", get(search::guild))
         .route("/channels/{channel_id}/messages/search", get(search::channel))

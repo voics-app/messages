@@ -141,7 +141,7 @@ async fn aborted_preparation_fences_a_creator_paused_after_indexing_before_activ
 }
 
 #[tokio::test]
-async fn author_inspection_recovers_a_real_reservation_that_never_reached_the_due_index() {
+async fn explicit_reconciliation_recovers_a_real_reservation_that_never_reached_the_due_index() {
     let mut f = Fixture::new("scheduled_unindexed").await;
     f.first.index = Arc::new(faults::UnavailableIndex(f.first.index.clone()));
     let service = ScheduledMessages::new(f.first.clone());
@@ -151,6 +151,7 @@ async fn author_inspection_recovers_a_real_reservation_that_never_reached_the_du
     f.harness.clock.advance_ms(PREPARATION_TIMEOUT_MS);
     f.harness.access.set_permissions(0);
     let reopened = ScheduledMessages::new(f.second.clone());
+    reopened.reconcile_author(command.author_id).await.unwrap();
     let failed = reopened.get(address(&command)).await.unwrap();
     assert_eq!(failed.status, ScheduledStatus::Failed);
     assert!(failed.draft.is_none());

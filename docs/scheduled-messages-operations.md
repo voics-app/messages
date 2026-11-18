@@ -33,10 +33,14 @@ Neither the polling cadence nor the recovery eligibility threshold is a wall-clo
 
 Accepted pending records have durable due entries. A crash between reservation and the first
 index write has not acknowledged acceptance and can leave an unindexed preparation. It is
-reconciled by the next author create/get/list/cancel operation, reading at most 100 active rows,
+reconciled by the next author create, HTTP inspection or cancel operation, reading at most 100 active rows,
 even after send permission is lost. Without a later author operation that unaccepted row can
 remain stored; the worker does not enumerate every author partition. It cannot dispatch or
 consume an additional accepted slot after an operation has reconciled its expired reservation.
+
+Application `get` and `list` are read-only queries. The authenticated HTTP inspection handlers
+explicitly run `reconcile_author` before querying; invalid paths/cursors/limits are rejected
+first. Another author's inspection cannot reconcile or reveal the original author's work.
 
 Metrics have bounded labels and contain no author/channel/schedule/message IDs:
 

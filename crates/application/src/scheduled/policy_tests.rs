@@ -7,13 +7,39 @@ use crate::{
 use discordy_messages_domain::{DeliveryMode, FLAG_SUPPRESS_NOTIFICATIONS, Permissions, scheduled::ScheduledFailure};
 
 #[tokio::test]
-async fn inspecting_an_unindexed_abandoned_reservation_recovers_it_without_send_permission() {
+async fn queries_do_not_reconcile_abandoned_reservations() {
+    let f = Fixture::new();
+    let command = f.command();
+    f.memory.fail_next_stage.store(true, Ordering::SeqCst);
+    assert!(f.service.create(command.clone()).await.is_err());
+    f.harness.clock.advance_ms(PREPARATION_TIMEOUT_MS);
+
+    assert!(f.service.get(address(&command)).await.is_err());
+    f.service
+        .list(ScheduleListQuery {
+            author_id: ALICE,
+            channel_id: CHANNEL,
+            after: None,
+            limit: 50,
+            now_ms: 0,
+        })
+        .await
+        .unwrap();
+    let untouched = f.memory.find(address(&command).key).await.unwrap().unwrap();
+    assert_eq!(untouched.status, ScheduledStatus::Preparing);
+    assert!(untouched.draft.is_some());
+    assert_eq!(f.memory.active(ALICE).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn explicit_reconciliation_recovers_an_unindexed_reservation_without_send_permission() {
     let f = Fixture::new();
     let command = f.command();
     f.memory.fail_next_stage.store(true, Ordering::SeqCst);
     assert!(f.service.create(command.clone()).await.is_err());
     f.harness.clock.advance_ms(PREPARATION_TIMEOUT_MS);
     f.harness.access.set_permissions(0);
+    f.service.reconcile_author(ALICE).await.unwrap();
     let page = f
         .service
         .list(ScheduleListQuery {
@@ -28,7 +54,7 @@ async fn inspecting_an_unindexed_abandoned_reservation_recovers_it_without_send_
     assert_eq!(
         page.items.len(),
         1,
-        "opening the author's list must reconcile an expired unindexed preparation"
+        "explicit author reconciliation must expose an expired unindexed preparation"
     );
     assert_eq!(page.items[0].status, ScheduledStatus::Failed);
     assert!(page.items[0].draft.is_none());

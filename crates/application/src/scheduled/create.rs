@@ -107,7 +107,9 @@ impl ScheduledMessages {
         }
     }
 
-    pub(super) async fn reconcile_author(&self, author: discordy_messages_domain::UserId) -> AppResult<()> {
+    /// Recover abandoned work for one authenticated author, bounded by their active quota.
+    /// Call explicitly before author inspection; `get` and `list` never perform recovery writes.
+    pub async fn reconcile_author(&self, author: discordy_messages_domain::UserId) -> AppResult<()> {
         let active = self.ports.journal.active(author).await?;
         if active.len() > AUTHOR_SCHEDULE_LIMIT as usize {
             return Err(PortError::new("active schedule discovery exceeds quota").into());

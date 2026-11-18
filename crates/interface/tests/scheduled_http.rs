@@ -23,6 +23,8 @@ use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceExt;
 
+#[path = "scheduled_http/recovery.rs"]
+mod recovery;
 #[path = "scheduled_http/states.rs"]
 mod states;
 

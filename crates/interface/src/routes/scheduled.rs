@@ -9,7 +9,7 @@ use axum::{
 };
 use contracts::scheduled::{ScheduledMessage, ScheduledMessageList};
 use discordy_messages_application::{
-    ports::scheduled::{ScheduleKey, ScheduleListQuery},
+    ports::scheduled::{SCHEDULE_PAGE_SIZE, ScheduleKey, ScheduleListQuery},
     scheduled::{ScheduleAddress, ScheduledMessages},
 };
 use discordy_messages_domain::{DomainError, UserId};
@@ -81,21 +81,27 @@ pub struct ListQuery {
     limit: Option<u16>,
 }
 
-pub async fn list(
+pub async fn inspect_list(
     State(state): State<AppState>,
     ScheduleCaller(author): ScheduleCaller,
     ApiPath(Id(channel)): ApiPath<Id>,
     ApiQuery(query): ApiQuery<ListQuery>,
 ) -> Result<Json<ScheduledMessageList>, ApiError> {
-    let page = service(&state)?
-        .list(ScheduleListQuery {
-            author_id: author,
-            channel_id: channel,
-            after: query.after.as_deref().map(dto::id).transpose()?,
-            limit: query.limit.unwrap_or(50),
-            now_ms: 0,
-        })
-        .await?;
+    let query = ScheduleListQuery {
+        author_id: author,
+        channel_id: channel,
+        after: query.after.as_deref().map(dto::id).transpose()?,
+        limit: query.limit.unwrap_or(50),
+        now_ms: 0,
+    };
+    if !(1..=SCHEDULE_PAGE_SIZE).contains(&query.limit) {
+        return Err(DomainError::invalid("limit", "must be 1..100").into());
+    }
+    let schedules = service(&state)?;
+    // Author inspection is the bounded recovery trigger for unindexed reservations.
+    // Keep that maintenance command explicit instead of hiding writes inside queries.
+    schedules.reconcile_author(author).await?;
+    let page = schedules.list(query).await?;
     let next_after = page
         .next_after
         .map(|id| id.to_string().parse())
@@ -107,14 +113,15 @@ pub async fn list(
     }))
 }
 
-pub async fn get(
+pub async fn inspect(
     State(state): State<AppState>,
     ScheduleCaller(author): ScheduleCaller,
     ApiPath((channel, schedule)): ApiPath<(Id, String)>,
 ) -> Result<Json<ScheduledMessage>, ApiError> {
-    Ok(Json(dto::resource(
-        service(&state)?.get(address(author, channel, &schedule)?).await?,
-    )?))
+    let address = address(author, channel, &schedule)?;
+    let schedules = service(&state)?;
+    schedules.reconcile_author(author).await?;
+    Ok(Json(dto::resource(schedules.get(address).await?)?))
 }
 
 pub async fn edit(
