@@ -7,6 +7,7 @@ mod pins;
 mod reactions;
 mod read_states;
 mod rows;
+mod scheduled;
 
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ pub use migrations::migrate;
 pub use pins::ScyllaPinRepository;
 pub use reactions::ScyllaReactionRepository;
 pub use read_states::ScyllaReadStateRepository;
+pub use scheduled::ScyllaScheduledMessages;
 
 pub(crate) fn port_error(error: impl std::fmt::Display) -> PortError {
     PortError::new(format!("scylla: {error}"))

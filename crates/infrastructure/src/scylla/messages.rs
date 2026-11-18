@@ -27,6 +27,16 @@ pub struct ScyllaMessageRepository {
 }
 
 impl ScyllaMessageRepository {
+    /// Scheduled delivery cannot transparently repeat a message insertion after an ambiguous result.
+    pub async fn for_scheduled_delivery(session: Arc<Session>) -> Result<Self, PortError> {
+        let mut repository = Self::new(session).await?;
+        for statement in [&mut repository.insert, &mut repository.advance_last] {
+            statement.set_is_idempotent(false);
+            statement.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
+        }
+        Ok(repository)
+    }
+
     pub async fn new(session: Arc<Session>) -> Result<Self, PortError> {
         let s = session.as_ref();
         let select = format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE channel_id = ? AND bucket = ?");
