@@ -517,7 +517,7 @@ async fn upload_slots_point_at_the_attachment_store() {
 }
 
 #[tokio::test]
-async fn older_ack_preserves_new_mentions_in_dispatch_and_ready_reads() {
+async fn older_ack_preserves_versioned_mentions_in_dispatch_and_internal_reads() {
     use discordy_messages_application::ports::MessageEventKind;
     let harness = Harness::new();
     let app = app(&harness);
@@ -544,7 +544,11 @@ async fn older_ack_preserves_new_mentions_in_dispatch_and_ready_reads() {
         assert_eq!(event.audience, Audience::Users(vec![BOB]));
         assert!(matches!(
             event.kind,
-            MessageEventKind::Acknowledged { mention_count: 1, .. }
+            MessageEventKind::Acknowledged {
+                mention_count: 1,
+                version: 3,
+                ..
+            }
         ));
     }
     let request = Request::builder()
@@ -556,6 +560,22 @@ async fn older_ack_preserves_new_mentions_in_dispatch_and_ready_reads() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reads[0]["last_message_id"], first);
     assert_eq!(reads[0]["mention_count"], 1);
+    assert_eq!(reads[0]["read_state_version"], "3");
+}
+
+#[tokio::test]
+async fn internal_read_state_header_certifies_an_empty_account() {
+    let harness = Harness::new();
+    let request = Request::builder()
+        .uri(format!("/internal/v1/users/{BOB}/read-states"))
+        .header("x-internal-token", INTERNAL)
+        .body(Body::empty())
+        .unwrap();
+    let response = app(&harness).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-read-state-versioned"], "1");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!([]));
 }
 
 #[tokio::test]

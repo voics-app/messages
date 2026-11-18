@@ -198,6 +198,7 @@ pub(crate) struct ReadStateRow {
 impl ReadStateRow {
     pub(crate) fn into_read_state(self) -> ReadState {
         ReadState {
+            version: 0,
             user_id: snowflake(self.user_id),
             channel_id: snowflake(self.channel_id),
             last_read_id: self.last_read_id.map(snowflake),

@@ -45,6 +45,15 @@ respect permission, mute, level and role/everyone settings; ordinary DMs count, 
 counts only observed online recipients. The atomic read-state writer preserves newer mentions
 across ACK and deduplicates delivery replays, including after manual unread.
 
+Migration `0009_read_state_version` adds a nullable companion metadata version; existing
+rows retain their state at version 0. Every successful mutation advances it in the same CAS.
+Replay/stale ACK keeps its version; exhaustion fails closed. MESSAGE_ACK and user-targeted
+READ_STATE_UPDATE carry `read_state_version` as a decimal string. Internal read-state arrays
+retain their shape and certify versions with `X-Read-State-Versioned: 1`, including empty
+accounts. Compatible gateway READY/resume hydration and client version dominance are required
+for live convergence (contracts#48, docs ADR0027). A missed publication heals on a newer
+snapshot or successful reconnect; accounting that never committed is still best effort.
+
 This writer requires a **coordinated old-writer drain** and paired backups of the original
 Scylla keyspace plus its companion vnode keyspace on the same cluster. See
 [read accounting](docs/read-accounting.md) before rollout or rollback. Message creation still

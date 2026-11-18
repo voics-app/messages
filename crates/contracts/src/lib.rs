@@ -29,6 +29,7 @@ pub mod event_type {
     pub const MESSAGE_REACTION_REMOVE_ALL: &str = "MESSAGE_REACTION_REMOVE_ALL";
     pub const CHANNEL_PINS_UPDATE: &str = "CHANNEL_PINS_UPDATE";
     pub const MESSAGE_ACK: &str = "MESSAGE_ACK";
+    pub const READ_STATE_UPDATE: &str = "READ_STATE_UPDATE";
     /// Consumed from [`super::GUILD_TOPIC`]: purge a banned user's recent messages.
     pub const BAN_MESSAGE_PURGE: &str = "BAN_MESSAGE_PURGE";
 }
@@ -549,6 +550,7 @@ pub struct ReadStateDto {
     pub id: String,
     pub last_message_id: Option<String>,
     pub mention_count: u32,
+    pub read_state_version: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +628,15 @@ pub struct MessageAckData {
     pub channel_id: String,
     pub message_id: String,
     pub mention_count: u32,
+    pub read_state_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadStateUpdateData {
+    pub channel_id: String,
+    pub last_message_id: Option<String>,
+    pub mention_count: u32,
+    pub read_state_version: String,
 }
 
 /// Optional body of `POST /channels/{id}/messages/{mid}/ack`.

@@ -42,9 +42,22 @@ struct Metadata {
     acknowledged_through: Option<i64>,
     baseline: i64,
     mention_count: i64,
+    read_state_version: Option<i64>,
 }
 
-type UpdateValues = (Uuid, Uuid, Option<i64>, Option<i64>, i64, i64, i64, i64, Uuid, Uuid);
+type UpdateValues = (
+    Uuid,
+    Uuid,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    Uuid,
+    Uuid,
+);
 
 impl Metadata {
     fn from_legacy(legacy: ReadState) -> Self {
@@ -55,6 +68,7 @@ impl Metadata {
             acknowledged_through: legacy.last_read_id.map(id),
             baseline: i64::from(legacy.mention_count),
             mention_count: i64::from(legacy.mention_count),
+            read_state_version: Some(0),
         }
     }
 
@@ -64,6 +78,7 @@ impl Metadata {
             || self.last_read_id.is_some_and(|last| last < 0)
             || self.acknowledged_through.is_some_and(|last| last < 0)
             || self.acknowledged_through < self.last_read_id
+            || self.read_state_version.is_some_and(|version| version < 0)
         {
             return Err(PortError::new("stored read-state metadata violates its invariants"));
         }
@@ -76,6 +91,7 @@ impl Metadata {
             channel_id,
             last_read_id: self.last_read_id.map(|value| MessageId::new(value as u64)),
             mention_count: self.mention_count as u32,
+            version: self.read_state_version.unwrap_or(0) as u64,
         }
     }
 
@@ -87,11 +103,23 @@ impl Metadata {
             self.acknowledged_through,
             self.baseline,
             self.mention_count,
+            self.read_state_version.unwrap_or(0),
             id(user),
             id(channel),
             NIL,
             previous,
         )
+    }
+
+    fn advance(&mut self) -> Result<(), PortError> {
+        self.read_state_version = Some(
+            self.read_state_version
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| PortError::new("read-state version exhausted"))?,
+        );
+        self.revision = Uuid::new_v4();
+        Ok(())
     }
 }
 
@@ -168,14 +196,14 @@ impl ScyllaReadStateRepository {
         legacy_find.set_consistency(Consistency::Quorum);
         let mut legacy_for_user = prepare(s, legacy).await?;
         legacy_for_user.set_consistency(Consistency::Quorum);
-        let metadata = quorum_read(s, &format!("SELECT revision, active_generation, last_read_id, acknowledged_through, baseline, mention_count FROM {table} WHERE user_id = ? AND channel_id = ? AND kind = 0 AND generation = ? AND message_id = 0")).await?;
-        let mut initialize = prepare(s, &format!("INSERT INTO {table} (user_id, channel_id, kind, generation, message_id, revision, active_generation, last_read_id, acknowledged_through, baseline, mention_count) VALUES (?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?) IF NOT EXISTS")).await?;
+        let metadata = quorum_read(s, &format!("SELECT revision, active_generation, last_read_id, acknowledged_through, baseline, mention_count, read_state_version FROM {table} WHERE user_id = ? AND channel_id = ? AND kind = 0 AND generation = ? AND message_id = 0")).await?;
+        let mut initialize = prepare(s, &format!("INSERT INTO {table} (user_id, channel_id, kind, generation, message_id, revision, active_generation, last_read_id, acknowledged_through, baseline, mention_count, read_state_version) VALUES (?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS")).await?;
         initialize.set_consistency(Consistency::Quorum);
         initialize.set_serial_consistency(Some(SerialConsistency::Serial));
         let seen = quorum_read(s, &format!("SELECT message_id FROM {table} WHERE user_id = ? AND channel_id = ? AND kind = 1 AND generation = ? AND message_id = ?")).await?;
         let remaining = quorum_read(s, &format!("SELECT count(*) FROM {table} WHERE user_id = ? AND channel_id = ? AND kind = 2 AND generation = ? AND message_id > ?")).await?;
         let update = format!(
-            "UPDATE {table} SET revision = ?, active_generation = ?, last_read_id = ?, acknowledged_through = ?, baseline = ?, mention_count = ? WHERE user_id = ? AND channel_id = ? AND kind = 0 AND generation = ? AND message_id = 0 IF revision = ?"
+            "UPDATE {table} SET revision = ?, active_generation = ?, last_read_id = ?, acknowledged_through = ?, baseline = ?, mention_count = ?, read_state_version = ? WHERE user_id = ? AND channel_id = ? AND kind = 0 AND generation = ? AND message_id = 0 IF revision = ?"
         );
         let forget = format!(
             "DELETE FROM {table} WHERE user_id = ? AND channel_id = ? AND kind = 1 AND generation = ? AND message_id <= ?"
@@ -268,6 +296,7 @@ impl ScyllaReadStateRepository {
                         value.acknowledged_through,
                         value.baseline,
                         value.mention_count,
+                        value.read_state_version.unwrap_or(0),
                     ),
                 )
                 .await
@@ -327,7 +356,7 @@ impl ScyllaReadStateRepository {
                 return Ok(old.state(user, channel));
             }
             let mut next = old.clone();
-            next.revision = Uuid::new_v4();
+            next.advance()?;
             next.last_read_id = Some(id(marker));
             let watermark = old.acknowledged_through.map_or(id(marker), |last| last.max(id(marker)));
             next.acknowledged_through = Some(watermark);
@@ -413,7 +442,7 @@ impl ReadStateRepository for ScyllaReadStateRepository {
                 return Ok(old.state(user, channel));
             }
             let mut next = old.clone();
-            next.revision = Uuid::new_v4();
+            next.advance()?;
             next.mention_count = (next.mention_count + 1).min(i64::from(u32::MAX));
             if applied(
                 self.session

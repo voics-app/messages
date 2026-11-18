@@ -2,12 +2,17 @@
 
 use std::sync::Arc;
 
-use discordy_messages_domain::{DeliveryMode, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS, GuildId, Message, UserId};
+use discordy_messages_domain::{
+    Audience, DeliveryMode, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS, GuildId, Message, UserId,
+};
 use futures::{StreamExt, TryStreamExt};
 
 use super::MessagingPorts;
 use crate::PortError;
-use crate::ports::{NotificationRecipientPage, NotificationRecipients, ReadStateRepository, RecipientQuery};
+use crate::ports::{
+    EventPublisher, MessageEvent, MessageEventKind, NotificationRecipientPage, NotificationRecipients,
+    ReadStateRepository, RecipientQuery,
+};
 
 const PAGE_SIZE: u16 = 200;
 const MAX_IN_FLIGHT: usize = 16;
@@ -15,6 +20,7 @@ const MAX_IN_FLIGHT: usize = 16;
 pub(super) struct RecordMentions {
     recipients: Arc<dyn NotificationRecipients>,
     reads: Arc<dyn ReadStateRepository>,
+    events: Arc<dyn EventPublisher>,
 }
 
 impl RecordMentions {
@@ -22,6 +28,7 @@ impl RecordMentions {
         Self {
             recipients: ports.notification_recipients.clone(),
             reads: ports.read_states.clone(),
+            events: ports.events.clone(),
         }
     }
 
@@ -97,8 +104,17 @@ impl RecordMentions {
         let results: Vec<_> = futures::stream::iter(page.recipients)
             .filter(|recipient| std::future::ready(recipient.counts_mention(message, guild.is_none())))
             .map(|recipient| async move {
-                self.reads
+                let state = self
+                    .reads
                     .record_mention(recipient.user_id, message.channel_id, message.id)
+                    .await?;
+                self.events
+                    .publish(MessageEvent {
+                        channel_id: message.channel_id,
+                        guild_id: guild,
+                        audience: Audience::Users(vec![recipient.user_id]),
+                        kind: MessageEventKind::ReadStateUpdated { state },
+                    })
                     .await
             })
             .buffer_unordered(MAX_IN_FLIGHT)

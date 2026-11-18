@@ -225,6 +225,7 @@ pub fn read_state_dto(state: &ReadState) -> ReadStateDto {
         id: state.channel_id.to_string(),
         last_message_id: state.last_read_id.map(|id| id.to_string()),
         mention_count: state.mention_count,
+        read_state_version: state.version.to_string(),
     }
 }
 

@@ -304,6 +304,7 @@ async fn read_states_round_trip(repo: &ScyllaReadStateRepository) {
     let user = Snowflake::new(77);
     let state = ReadState {
         mention_count: 1,
+        version: 1,
         ..ReadState::unread(user, Snowflake::new(1))
     };
     repo.record_mention(user, Snowflake::new(1), Snowflake::new(10))

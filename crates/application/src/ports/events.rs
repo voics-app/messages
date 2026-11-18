@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use discordy_messages_domain::{Audience, ChannelId, Emoji, GuildId, Message, MessageId, UserId};
+use discordy_messages_domain::{Audience, ChannelId, Emoji, GuildId, Message, MessageId, ReadState, UserId};
 
 use crate::error::PortError;
 
@@ -48,6 +48,10 @@ pub enum MessageEventKind {
     Acknowledged {
         message_id: MessageId,
         mention_count: u32,
+        version: u64,
+    },
+    ReadStateUpdated {
+        state: ReadState,
     },
 }
 
