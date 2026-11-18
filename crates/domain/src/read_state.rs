@@ -11,6 +11,8 @@ pub struct ReadState {
     pub channel_id: ChannelId,
     pub last_read_id: Option<MessageId>,
     pub mention_count: u32,
+    /// Monotonic committed mutation order, independent of message IDs.
+    pub version: u64,
 }
 
 impl ReadState {
@@ -20,6 +22,7 @@ impl ReadState {
             channel_id,
             last_read_id: None,
             mention_count: 0,
+            version: 0,
         }
     }
 }

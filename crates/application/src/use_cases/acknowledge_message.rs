@@ -67,6 +67,7 @@ impl AcknowledgeMessage {
             kind: MessageEventKind::Acknowledged {
                 message_id: state.last_read_id.unwrap_or(message_id),
                 mention_count: state.mention_count,
+                version: state.version,
             },
         };
         announce(self.events.as_ref(), ack).await;

@@ -8,6 +8,7 @@ use scylla::client::session::Session;
 use super::super::port_error;
 
 const MIGRATION: &str = include_str!("../../../../../migrations/0008_read_accounting.cql");
+const VERSION_MIGRATION: &str = include_str!("../../../../../migrations/0009_read_state_version.cql");
 
 fn identifier(value: &str) -> Result<String, PortError> {
     if value.is_empty()
@@ -104,5 +105,52 @@ pub(super) async fn bootstrap(session: &Session, configured: Option<&str>) -> Re
         )
         .await
         .map_err(|error| PortError::new(format!("read-state LWT capability check failed for {name}: {error}")))?;
+    add_version(session, &name).await?;
     Ok(format!("{name}.read_state_accounting"))
+}
+
+async fn version_column(session: &Session, keyspace: &str) -> Result<Option<String>, PortError> {
+    let result = session.query_unpaged(
+        "SELECT type FROM system_schema.columns WHERE keyspace_name=? AND table_name='read_state_accounting' AND column_name='read_state_version'",
+        (keyspace,),
+    ).await.map_err(port_error)?.into_rows_result().map_err(port_error)?;
+    result
+        .rows::<(String,)>()
+        .map_err(port_error)?
+        .next()
+        .transpose()
+        .map(|row| row.map(|row| row.0))
+        .map_err(port_error)
+}
+
+async fn add_version(session: &Session, keyspace: &str) -> Result<(), PortError> {
+    if version_column(session, keyspace).await?.is_none() {
+        let statement = VERSION_MIGRATION
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("{{keyspace}}", keyspace);
+        let result = session.query_unpaged(statement.trim().trim_end_matches(';'), ()).await;
+        session.await_schema_agreement().await.map_err(port_error)?;
+        // Another starting replica may have applied the same additive migration.
+        if let Err(error) = result
+            && version_column(session, keyspace).await?.as_deref() != Some("bigint")
+        {
+            return Err(port_error(error));
+        }
+    }
+    if version_column(session, keyspace).await?.as_deref() != Some("bigint") {
+        return Err(PortError::new("read-state version column must be bigint"));
+    }
+    session
+        .query_unpaged(
+            format!(
+                "INSERT INTO {keyspace}.schema_migrations (version) VALUES ('0009_read_state_version') IF NOT EXISTS"
+            ),
+            (),
+        )
+        .await
+        .map_err(port_error)?;
+    Ok(())
 }

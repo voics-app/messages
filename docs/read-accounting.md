@@ -1,5 +1,18 @@
 # Mention accounting and read state
 
+Versioned snapshot follow-up (contracts#48, docs ADR0027): migration0009 adds only the nullable
+companion `read_state_version` column. Old rows read at version0; successful metadata/ledger
+mutations increment atomically, and duplicate accounting/stale ACK does not increment.
+Fence all writers that leave this column unchanged before enabling the versioned writer.
+MESSAGE_ACK and READ_STATE_UPDATE contain full versioned snapshots; the internal array
+endpoint certifies support through `X-Read-State-Versioned: 1`. Deployment needs compatible
+gateway hydration during identify/resume and client version comparison. Publication remains
+best effort; a subsequent snapshot repairs a missed event, not an accounting write that failed.
+After any database restore, invalidate gateway sessions/resume buffers before reopening so
+fresh READY can establish the restored version baseline. Include the version column in paired
+backups; never reset it while certified clients remain connected. Unversioned binary rollback
+requires fencing those sessions as well as the existing data-conversion/restore procedure.
+
 The message writer obtains current permitted recipients from API's
 `GET /internal/v1/channels/{id}/notification-recipients` (contracts#44/API#146), independently
 of push tokens. Direct-only guild mentions use one-candidate exact-ID seeks. Roles, broadcasts

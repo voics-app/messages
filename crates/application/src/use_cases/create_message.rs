@@ -715,6 +715,11 @@ mod tests {
             .unwrap();
         let bob = h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap();
         assert_eq!(bob.mention_count, 1);
+        assert_eq!(bob.version, 1);
+        assert!(h.events.events.lock().unwrap().iter().any(|event| {
+            event.audience == Audience::Users(vec![BOB])
+                && matches!(&event.kind, MessageEventKind::ReadStateUpdated { state } if state == &bob)
+        }));
         assert!(h.read_states.find(ALICE, CHANNEL).await.unwrap().is_none());
     }
 

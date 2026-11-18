@@ -250,6 +250,16 @@ impl ReadProgress {
         }
     }
 
+    fn advance(&mut self) -> Result<(), PortError> {
+        self.state.version = self
+            .state
+            .version
+            .checked_add(1)
+            .filter(|version| *version <= i64::MAX as u64)
+            .ok_or_else(|| PortError::new("read-state version exhausted"))?;
+        Ok(())
+    }
+
     fn count(&mut self) {
         self.state.mention_count = self
             .baseline
@@ -278,7 +288,9 @@ impl ReadStateRepository for InMemoryReadStates {
         let row = rows
             .entry((user, channel))
             .or_insert_with(|| ReadProgress::new(user, channel));
-        if row.acknowledged_through.is_none_or(|last| message > last) && row.seen.insert(message) {
+        if row.acknowledged_through.is_none_or(|last| message > last) && !row.seen.contains(&message) {
+            row.advance()?;
+            row.seen.insert(message);
             row.active.insert(message);
             row.count();
         }
@@ -291,6 +303,7 @@ impl ReadStateRepository for InMemoryReadStates {
             .entry((user, channel))
             .or_insert_with(|| ReadProgress::new(user, channel));
         if row.state.last_read_id.is_none_or(|last| message > last) {
+            row.advance()?;
             row.state.last_read_id = Some(message);
             row.acknowledged_through = Some(row.acknowledged_through.map_or(message, |last| last.max(message)));
             row.baseline = 0;
@@ -312,6 +325,7 @@ impl ReadStateRepository for InMemoryReadStates {
         let row = rows
             .entry((user, channel))
             .or_insert_with(|| ReadProgress::new(user, channel));
+        row.advance()?;
         row.state.last_read_id = Some(message);
         row.acknowledged_through = Some(row.acknowledged_through.map_or(message, |last| last.max(message)));
         row.baseline = mentions;

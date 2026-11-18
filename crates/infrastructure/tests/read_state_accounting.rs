@@ -16,6 +16,65 @@ fn id(value: u64) -> Snowflake {
 }
 
 #[tokio::test]
+async fn committed_mutations_have_monotonic_versions_without_replay_increments() {
+    let database = support::start_scylla("reads_versions").await;
+    let repo = ScyllaReadStateRepository::new(database.session.clone()).await.unwrap();
+    repo.record_mention(USER, CHANNEL, id(20)).await.unwrap();
+    repo.record_mention(USER, CHANNEL, id(10)).await.unwrap();
+    repo.record_mention(USER, CHANNEL, id(20)).await.unwrap();
+    repo.acknowledge(USER, CHANNEL, id(10)).await.unwrap();
+    repo.acknowledge(USER, CHANNEL, id(9)).await.unwrap();
+    let row = database.session.query_unpaged(
+        "SELECT read_state_version,mention_count FROM reads_versions_reads.read_state_accounting WHERE user_id=100 AND channel_id=200 AND kind=0 AND generation=00000000-0000-0000-0000-000000000000 AND message_id=0", ()
+    ).await.unwrap().into_rows_result().unwrap().single_row::<(i64,i64)>().unwrap();
+    assert_eq!(row, (3, 1));
+}
+
+#[tokio::test]
+async fn version_migration_preserves_old_metadata_and_exhaustion_rejects_mutations() {
+    let database = support::start_scylla("reads_upgrade").await;
+    let session = &database.session;
+    session.query_unpaged("CREATE KEYSPACE reads_upgrade_reads WITH replication={'class':'NetworkTopologyStrategy','replication_factor':1} AND tablets={'enabled':false}", ()).await.unwrap();
+    let script = include_str!("../../../migrations/0008_read_accounting.cql")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("{{keyspace}}", "reads_upgrade_reads");
+    for statement in script.split(';').map(str::trim).filter(|line| !line.is_empty()) {
+        session.query_unpaged(statement, ()).await.unwrap();
+    }
+    session
+        .query_unpaged("INSERT INTO read_states (user_id,channel_id) VALUES (100,200)", ())
+        .await
+        .unwrap();
+    session.query_unpaged("INSERT INTO reads_upgrade_reads.read_state_accounting (user_id,channel_id,kind,generation,message_id,revision,active_generation,last_read_id,acknowledged_through,baseline,mention_count) VALUES (100,200,0,00000000-0000-0000-0000-000000000000,0,?,?,10,10,7,7)", (uuid::Uuid::new_v4(), uuid::Uuid::new_v4())).await.unwrap();
+    let repo = ScyllaReadStateRepository::new(session.clone()).await.unwrap();
+    let old = repo.for_user(USER).await.unwrap().remove(0);
+    assert_eq!((old.version, old.mention_count, old.last_read_id), (0, 7, Some(id(10))));
+    let first = repo.record_mention(USER, CHANNEL, id(20)).await.unwrap();
+    assert_eq!((first.version, first.mention_count), (1, 8));
+    assert_eq!(repo.record_mention(USER, CHANNEL, id(20)).await.unwrap(), first);
+    let manual = repo.set_position(USER, CHANNEL, id(5), 2).await.unwrap();
+    assert_eq!(manual.version, 2);
+    session.query_unpaged("UPDATE reads_upgrade_reads.read_state_accounting SET read_state_version=9223372036854775807 WHERE user_id=100 AND channel_id=200 AND kind=0 AND generation=00000000-0000-0000-0000-000000000000 AND message_id=0", ()).await.unwrap();
+    assert!(
+        repo.record_mention(USER, CHANNEL, id(21))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("version exhausted")
+    );
+    assert!(repo.acknowledge(USER, CHANNEL, id(20)).await.is_err());
+    let exhausted = repo.find(USER, CHANNEL).await.unwrap().unwrap();
+    assert_eq!(
+        (exhausted.version, exhausted.mention_count, exhausted.last_read_id),
+        (i64::MAX as u64, 2, Some(id(5)))
+    );
+    assert_eq!(repo.record_mention(USER, CHANNEL, id(20)).await.unwrap(), exhausted);
+}
+
+#[tokio::test]
 async fn concurrent_repositories_preserve_counts_and_idempotent_replays() {
     assert!(support::cpu_supports_scylla());
     let database = support::start_scylla("reads_concurrent").await;
@@ -40,9 +99,11 @@ async fn concurrent_repositories_preserve_counts_and_idempotent_replays() {
         .await
         .unwrap();
     assert_eq!(first.find(USER, CHANNEL).await.unwrap().unwrap().mention_count, 64);
+    assert_eq!(first.find(USER, CHANNEL).await.unwrap().unwrap().version, 64);
     assert_eq!(second.for_user(USER).await.unwrap()[0].mention_count, 64);
     let state = second.acknowledge(USER, CHANNEL, id(32)).await.unwrap();
     assert_eq!(state.mention_count, 32);
+    assert_eq!(state.version, 65);
     assert_eq!(first.acknowledge(USER, CHANNEL, id(31)).await.unwrap(), state);
     assert_eq!(first.acknowledge(USER, CHANNEL, id(32)).await.unwrap(), state);
     // Replays stay ignored even though ACK transactionally removed old ledger rows.
@@ -264,6 +325,10 @@ async fn concurrent_load_preserves_every_delivery_and_bounds_live_rows_after_ack
         .await
         .unwrap();
     let writes_elapsed = started.elapsed();
+    assert_eq!(
+        repositories[0].find(USER, CHANNEL).await.unwrap().unwrap().version,
+        1024
+    );
     assert_eq!(
         repositories[0]
             .find(USER, CHANNEL)
