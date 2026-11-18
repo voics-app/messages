@@ -3,6 +3,8 @@
 mod create;
 mod dispatch;
 mod mutate;
+mod work_queue;
+mod worker;
 
 use crate::{
     AppError, AppResult, PortError, RateLimiter,
@@ -14,6 +16,7 @@ use discordy_messages_domain::scheduled::{
 use discordy_messages_domain::{ChannelId, DomainError, UserId};
 pub use dispatch::ScheduledDispatcher;
 use std::sync::Arc;
+pub use worker::{ScheduleScan, ScheduledWorker};
 
 #[derive(Clone)]
 pub struct ScheduledPorts {
@@ -123,3 +126,5 @@ fn author_draft(job: &ScheduledMessage) -> AppResult<ScheduledAuthorDraft> {
 pub mod fakes;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod worker_tests;

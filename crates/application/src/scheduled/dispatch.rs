@@ -26,11 +26,11 @@ impl ScheduledDispatcher {
             self.ports.journal.change(key, ScheduleChange::Recover, now).await?;
             return Ok(None);
         }
-        if !job.due(now) {
+        if job.status == ScheduledStatus::Pending && now.saturating_sub(job.scheduled_at_ms) >= MAX_OVERDUE_MS {
+            self.reject(&job, ScheduledFailure::DependencyUnavailable).await?;
             return Ok(None);
         }
-        if now.saturating_sub(job.scheduled_at_ms) >= MAX_OVERDUE_MS {
-            self.reject(&job, ScheduledFailure::DependencyUnavailable).await?;
+        if !job.due(now) {
             return Ok(None);
         }
         self.prepare_and_claim(job).await
