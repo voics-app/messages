@@ -59,6 +59,24 @@ Scylla keyspace plus its companion vnode keyspace on the same cluster. See
 [read accounting](docs/read-accounting.md) before rollout or rollback. Message creation still
 records accounting as a best-effort side effect; this is not a durable accounting outbox.
 
+## Scheduled messages (in progress)
+
+The optional scheduler accepts user Bearer sessions at
+`POST|GET /api/v1/channels/{id}/messages/scheduled` and
+`GET|PATCH|DELETE /api/v1/channels/{id}/messages/scheduled/{schedule_id}`.
+It supports Standard text, TTS, reply and silent options, with author-private drafts,
+revision-fenced edits/cancellation and a stable client UUID for safe acceptance retries.
+`SCHEDULED_MESSAGES_ENABLED` defaults to false; disabled endpoints return 503 and no
+schedule schema or worker is started. The complete client and coupled acceptance slice
+is still in progress. No deployment is implied by this source implementation.
+
+An enabled process uses a separate vnode keyspace on the existing Scylla cluster,
+polls bounded shard pages and permits four dispatches in flight. It makes one insertion
+attempt after a durable claim. Uncertain outcomes remain visible as `delivery_unknown`
+and are never automatically resent. See [configuration, metrics and recovery](docs/scheduled-messages-operations.md)
+before enabling or restoring it, and [implementation progress](docs/scheduled-messages-progress.md)
+for the current validation scope.
+
 ## Notifier (push notifications)
 
 `bin/notifier` (crate `crates/notifier`, image `messages-notifier` from `Dockerfile.notifier`, port

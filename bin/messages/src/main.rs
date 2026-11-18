@@ -3,6 +3,7 @@
 
 mod config;
 mod probes;
+mod scheduled;
 mod telemetry;
 
 use std::process::ExitCode;
@@ -161,13 +162,20 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         search: search_index.clone(),
         unfurler: Arc::new(HttpLinkUnfurler::new(outbound)),
     };
-    let probes: Vec<Arc<dyn ReadinessCheck>> = vec![
+    let scheduler = scheduled::Scheduler::start(&config, session.clone(), &ports).await?;
+    let mut probes: Vec<Arc<dyn ReadinessCheck>> = vec![
         Arc::new(ScyllaProbe(session)),
         Arc::new(ReadStateProbe(read_states)),
         Arc::new(KafkaProbe(kafka)),
         Arc::new(IdProbe(ids)),
     ];
-    let state = AppState::new(
+    if let Some(scheduler) = &scheduler {
+        probes.push(Arc::new(probes::ScheduledProbe {
+            repository: scheduler.repository.clone(),
+            running: scheduler.running.clone(),
+        }));
+    }
+    let mut state = AppState::new(
         &ports,
         authenticator,
         InternalToken::new(&config.internal_service_token),
@@ -176,6 +184,9 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         probes,
         metrics,
     );
+    if let Some(scheduler) = &scheduler {
+        state = state.with_scheduled(scheduler.service.clone());
+    }
 
     if let Some(pg) = pg_index {
         tokio::spawn(run_search(
@@ -200,6 +211,9 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     axum::serve(listener, router(state).layer(cors))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    if let Some(scheduler) = scheduler {
+        scheduler.shutdown().await;
+    }
     tracing::info!("messages service stopped gracefully");
     Ok(())
 }

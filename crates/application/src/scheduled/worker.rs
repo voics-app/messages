@@ -12,6 +12,7 @@ pub struct ScheduleScan {
     pub removed: usize,
     pub recovered: usize,
     pub oldest_due_age_ms: u64,
+    pub shard_due_ages: Vec<(u8, u64)>,
     /// Observed candidates, not a whole-database census: preparing/pending/dispatching/sent/failed/cancelled/unknown.
     pub states: [u64; 7],
     pub wrapped_shards: Vec<u8>,
@@ -83,6 +84,8 @@ impl ScheduledWorker {
         report.pages += 1;
         let short_page = page.len() < usize::from(SCHEDULE_PAGE_SIZE);
         let mut last = cursor;
+        let previous_oldest = report.oldest_due_age_ms;
+        report.oldest_due_age_ms = 0;
         let mut blocked = false;
         for candidate in page {
             report.examined += 1;
@@ -100,6 +103,8 @@ impl ScheduledWorker {
         } else {
             self.ports.index.save_cursor(shard, last).await?;
         }
+        report.shard_due_ages.push((shard, report.oldest_due_age_ms));
+        report.oldest_due_age_ms = report.oldest_due_age_ms.max(previous_oldest);
         Ok(())
     }
 

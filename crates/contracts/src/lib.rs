@@ -11,6 +11,11 @@ use serde_json::Value;
 mod notification_recipients;
 pub use notification_recipients::{NotificationRecipientDto, NotificationRecipientPageDto};
 
+#[rustfmt::skip]
+#[allow(clippy::all)]
+#[path = "scheduled/types.rs"]
+pub mod scheduled;
+
 /// The event-bus topic this service produces to (P6).
 pub const MESSAGE_TOPIC: &str = "discordy.message.v1";
 /// The guild topic this service only consumes (bus-only BAN_MESSAGE_PURGE).
