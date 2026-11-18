@@ -517,6 +517,48 @@ async fn upload_slots_point_at_the_attachment_store() {
 }
 
 #[tokio::test]
+async fn older_ack_preserves_new_mentions_in_dispatch_and_ready_reads() {
+    use discordy_messages_application::ports::MessageEventKind;
+    let harness = Harness::new();
+    let app = app(&harness);
+    let mut first = String::new();
+    for index in 0..2 {
+        let (status, message) = call(
+            &app,
+            Method::POST,
+            &messages_uri(),
+            Some(ALICE_TOKEN),
+            Some(json!({"content": format!("mention {index} <@{BOB}>")})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        if index == 0 {
+            first = message["id"].as_str().unwrap().to_owned();
+        }
+    }
+    let ack_uri = format!("{}/{first}/ack", messages_uri());
+    for _ in 0..2 {
+        let (status, _) = call(&app, Method::POST, &ack_uri, Some("Bearer bob"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let event = harness.events.events.lock().unwrap().last().unwrap().clone();
+        assert_eq!(event.audience, Audience::Users(vec![BOB]));
+        assert!(matches!(
+            event.kind,
+            MessageEventKind::Acknowledged { mention_count: 1, .. }
+        ));
+    }
+    let request = Request::builder()
+        .uri(format!("/internal/v1/users/{BOB}/read-states"))
+        .header("x-internal-token", INTERNAL)
+        .body(Body::empty())
+        .unwrap();
+    let (status, reads) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reads[0]["last_message_id"], first);
+    assert_eq!(reads[0]["mention_count"], 1);
+}
+
+#[tokio::test]
 async fn internal_create_posts_as_the_author_override_without_a_user_check() {
     let harness = Harness::new();
     harness.access.set_permissions(Permissions::VIEW_CHANNEL);

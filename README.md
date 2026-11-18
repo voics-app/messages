@@ -38,6 +38,18 @@ call message), `GET /channels/{id}/messages/{mid}` (one stored message, used by 
 
 Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`. Metrics: `http_requests_total` and `http_request_duration_seconds` (method, route, status class), `db_query_duration_seconds` (db, operation), `messages_created_total`, `messages_edited_total`, `messages_deleted_total`, `kafka_produce_duration_seconds` and `kafka_produce_errors_total` (topic).
 
+## Read-state accounting
+
+Mention badges use a separate current-policy directory, independent of push tokens. Counts
+respect permission, mute, level and role/everyone settings; ordinary DMs count, and `@here`
+counts only observed online recipients. The atomic read-state writer preserves newer mentions
+across ACK and deduplicates delivery replays, including after manual unread.
+
+This writer requires a **coordinated old-writer drain** and paired backups of the original
+Scylla keyspace plus its companion vnode keyspace on the same cluster. See
+[read accounting](docs/read-accounting.md) before rollout or rollback. Message creation still
+records accounting as a best-effort side effect; this is not a durable accounting outbox.
+
 ## Notifier (push notifications)
 
 `bin/notifier` (crate `crates/notifier`, image `messages-notifier` from `Dockerfile.notifier`, port
@@ -119,6 +131,7 @@ is reported at once.
 | `KAFKA_BROKERS` | yes | | comma-separated brokers |
 | `SCYLLA_NODES` | yes | | comma-separated `host:port` |
 | `SCYLLA_KEYSPACE` | no | `discordy` | keyspace (created and migrated at startup) |
+| `SCYLLA_READ_STATE_KEYSPACE` | no | `<SCYLLA_KEYSPACE>_reads` | Distinct vnode keyspace on the same cluster for atomic read accounting; copies the main replication policy and must be included in backup/restore |
 | `API_INTERNAL_URL` | yes | | api service base URL |
 | `MINIO_ENDPOINT` | yes | | MinIO API URL (server-side calls) |
 | `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | yes | | MinIO credentials |

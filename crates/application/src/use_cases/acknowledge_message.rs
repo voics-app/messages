@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use discordy_messages_domain::{Audience, ChannelId, MessageId, ReadState, UserId};
+use discordy_messages_domain::{Audience, ChannelId, DomainError, MessageId, ReadState, UserId};
 
 use super::MessagingPorts;
 use super::support::announce;
@@ -47,18 +47,19 @@ impl AcknowledgeMessage {
         user: UserId,
         manual: Option<u32>,
     ) -> AppResult<ReadState> {
+        if message_id.value() > i64::MAX as u64 {
+            return Err(DomainError::invalid("message_id", "outside the supported ID range").into());
+        }
         let access = self.access.access(channel_id, user).await?;
         access.ensure_can_view()?;
-        let mut state = self
-            .read_states
-            .find(user, channel_id)
-            .await?
-            .unwrap_or_else(|| ReadState::unread(user, channel_id));
-        match manual {
-            Some(mentions) => state.set_position(message_id, mentions),
-            None => state.acknowledge(message_id),
-        }
-        self.read_states.save(&state).await?;
+        let state = match manual {
+            Some(mentions) => {
+                self.read_states
+                    .set_position(user, channel_id, message_id, mentions)
+                    .await?
+            }
+            None => self.read_states.acknowledge(user, channel_id, message_id).await?,
+        };
         let ack = MessageEvent {
             channel_id,
             guild_id: access.guild_id,
@@ -81,9 +82,10 @@ mod tests {
     #[tokio::test]
     async fn acknowledging_clears_mentions_and_notifies_only_the_user() {
         let h = Harness::new();
-        let mut state = ReadState::unread(BOB, CHANNEL);
-        state.record_mention(Snowflake::new(5));
-        h.read_states.save(&state).await.unwrap();
+        h.read_states
+            .record_mention(BOB, CHANNEL, Snowflake::new(5))
+            .await
+            .unwrap();
 
         let state = AcknowledgeMessage::new(&h.ports)
             .execute(CHANNEL, Snowflake::new(9), BOB)
@@ -121,5 +123,18 @@ mod tests {
         use_case.execute(CHANNEL, Snowflake::new(20), BOB).await.unwrap();
         let state = use_case.execute(CHANNEL, Snowflake::new(10), BOB).await.unwrap();
         assert_eq!(state.last_read_id, Some(Snowflake::new(20)));
+    }
+
+    #[tokio::test]
+    async fn an_out_of_range_marker_cannot_poison_stored_read_state() {
+        let h = Harness::new();
+        assert!(
+            AcknowledgeMessage::new(&h.ports)
+                .execute(CHANNEL, Snowflake::new(u64::MAX), BOB)
+                .await
+                .is_err()
+        );
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
+        assert!(h.events.kinds().is_empty());
     }
 }

@@ -302,10 +302,16 @@ async fn pins_round_trip(repo: &ScyllaPinRepository) {
 
 async fn read_states_round_trip(repo: &ScyllaReadStateRepository) {
     let user = Snowflake::new(77);
-    let mut state = ReadState::unread(user, Snowflake::new(1));
-    state.record_mention(Snowflake::new(10));
-    repo.save(&state).await.unwrap();
-    repo.save(&ReadState::unread(user, Snowflake::new(2))).await.unwrap();
+    let state = ReadState {
+        mention_count: 1,
+        ..ReadState::unread(user, Snowflake::new(1))
+    };
+    repo.record_mention(user, Snowflake::new(1), Snowflake::new(10))
+        .await
+        .unwrap();
+    repo.acknowledge(user, Snowflake::new(2), Snowflake::new(1))
+        .await
+        .unwrap();
     assert_eq!(repo.find(user, Snowflake::new(1)).await.unwrap(), Some(state.clone()));
     assert_eq!(repo.for_user(user).await.unwrap().len(), 2);
     assert_eq!(repo.find(Snowflake::new(78), Snowflake::new(1)).await.unwrap(), None);

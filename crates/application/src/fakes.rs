@@ -1,6 +1,6 @@
 //! In-memory port implementations for use case tests.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -228,21 +228,97 @@ impl PinRepository for InMemoryPins {
 
 #[derive(Default)]
 pub struct InMemoryReadStates {
-    rows: Mutex<HashMap<(UserId, ChannelId), ReadState>>,
+    rows: Mutex<HashMap<(UserId, ChannelId), ReadProgress>>,
+}
+
+struct ReadProgress {
+    state: ReadState,
+    acknowledged_through: Option<MessageId>,
+    baseline: u32,
+    seen: BTreeSet<MessageId>,
+    active: BTreeSet<MessageId>,
+}
+
+impl ReadProgress {
+    fn new(user_id: UserId, channel_id: ChannelId) -> Self {
+        Self {
+            state: ReadState::unread(user_id, channel_id),
+            acknowledged_through: None,
+            baseline: 0,
+            seen: BTreeSet::new(),
+            active: BTreeSet::new(),
+        }
+    }
+
+    fn count(&mut self) {
+        self.state.mention_count = self
+            .baseline
+            .saturating_add(u32::try_from(self.active.len()).unwrap_or(u32::MAX));
+    }
 }
 
 #[async_trait]
 impl ReadStateRepository for InMemoryReadStates {
     async fn find(&self, user_id: UserId, channel_id: ChannelId) -> Result<Option<ReadState>, PortError> {
-        Ok(self.rows.lock().unwrap().get(&(user_id, channel_id)).cloned())
-    }
-
-    async fn save(&self, state: &ReadState) -> Result<(), PortError> {
-        self.rows
+        Ok(self
+            .rows
             .lock()
             .unwrap()
-            .insert((state.user_id, state.channel_id), state.clone());
-        Ok(())
+            .get(&(user_id, channel_id))
+            .map(|row| row.state.clone()))
+    }
+
+    async fn record_mention(
+        &self,
+        user: UserId,
+        channel: ChannelId,
+        message: MessageId,
+    ) -> Result<ReadState, PortError> {
+        let mut rows = self.rows.lock().unwrap();
+        let row = rows
+            .entry((user, channel))
+            .or_insert_with(|| ReadProgress::new(user, channel));
+        if row.acknowledged_through.is_none_or(|last| message > last) && row.seen.insert(message) {
+            row.active.insert(message);
+            row.count();
+        }
+        Ok(row.state.clone())
+    }
+
+    async fn acknowledge(&self, user: UserId, channel: ChannelId, message: MessageId) -> Result<ReadState, PortError> {
+        let mut rows = self.rows.lock().unwrap();
+        let row = rows
+            .entry((user, channel))
+            .or_insert_with(|| ReadProgress::new(user, channel));
+        if row.state.last_read_id.is_none_or(|last| message > last) {
+            row.state.last_read_id = Some(message);
+            row.acknowledged_through = Some(row.acknowledged_through.map_or(message, |last| last.max(message)));
+            row.baseline = 0;
+            row.active.retain(|id| *id > message);
+            row.seen.retain(|id| Some(*id) > row.acknowledged_through);
+            row.count();
+        }
+        Ok(row.state.clone())
+    }
+
+    async fn set_position(
+        &self,
+        user: UserId,
+        channel: ChannelId,
+        message: MessageId,
+        mentions: u32,
+    ) -> Result<ReadState, PortError> {
+        let mut rows = self.rows.lock().unwrap();
+        let row = rows
+            .entry((user, channel))
+            .or_insert_with(|| ReadProgress::new(user, channel));
+        row.state.last_read_id = Some(message);
+        row.acknowledged_through = Some(row.acknowledged_through.map_or(message, |last| last.max(message)));
+        row.baseline = mentions;
+        row.active.clear();
+        row.seen.retain(|id| Some(*id) > row.acknowledged_through);
+        row.count();
+        Ok(row.state.clone())
     }
 
     async fn for_user(&self, user_id: UserId) -> Result<Vec<ReadState>, PortError> {
@@ -251,8 +327,8 @@ impl ReadStateRepository for InMemoryReadStates {
             .lock()
             .unwrap()
             .values()
-            .filter(|s| s.user_id == user_id)
-            .cloned()
+            .filter(|row| row.state.user_id == user_id)
+            .map(|row| row.state.clone())
             .collect())
     }
 }
@@ -713,12 +789,72 @@ impl RemoteMediaFetcher for FakeMedia {
 }
 
 /// All fakes, wired into a [`MessagingPorts`].
+pub struct FakeNotificationRecipients {
+    pub recipients: Mutex<Vec<NotificationRecipient>>,
+    pub error: Mutex<Option<PortError>>,
+    pub calls: Mutex<Vec<RecipientQuery>>,
+    pub hidden: Mutex<BTreeSet<UserId>>,
+    access: Arc<FakeAccess>,
+}
+
+#[async_trait]
+impl NotificationRecipients for FakeNotificationRecipients {
+    async fn page(&self, query: RecipientQuery) -> Result<NotificationRecipientPage, PortError> {
+        self.calls.lock().unwrap().push(query);
+        if let Some(error) = self.error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        let access = self.access.channel.lock().unwrap().clone().unwrap();
+        let mut candidates: Vec<_> = self
+            .recipients
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|recipient| query.after.is_none_or(|after| recipient.user_id > after))
+            .cloned()
+            .collect();
+        candidates.sort_by_key(|recipient| recipient.user_id);
+        let more = candidates.len() > usize::from(query.limit);
+        candidates.truncate(usize::from(query.limit));
+        let next_after = more.then(|| candidates.last().unwrap().user_id);
+        candidates.retain(|recipient| {
+            recipient.user_id != query.author_id && !self.hidden.lock().unwrap().contains(&recipient.user_id)
+        });
+        if access.delivery_mode != DeliveryMode::Standard {
+            candidates.clear();
+        }
+        Ok(NotificationRecipientPage {
+            guild_id: access.guild_id,
+            delivery_mode: access.delivery_mode,
+            recipients: candidates,
+            next_after: if access.delivery_mode == DeliveryMode::Standard {
+                next_after
+            } else {
+                None
+            },
+        })
+    }
+}
+
+pub fn notification_recipient(user_id: UserId) -> NotificationRecipient {
+    NotificationRecipient {
+        user_id,
+        role_ids: vec![],
+        online: false,
+        level: discordy_messages_domain::NotificationLevel::OnlyMentions,
+        muted: false,
+        suppress_everyone: false,
+        suppress_roles: false,
+    }
+}
+
 pub struct Harness {
     pub access: Arc<FakeAccess>,
     pub messages: Arc<InMemoryMessages>,
     pub reactions: Arc<InMemoryReactions>,
     pub pins: Arc<InMemoryPins>,
     pub read_states: Arc<InMemoryReadStates>,
+    pub notification_recipients: Arc<FakeNotificationRecipients>,
     pub storage: Arc<FakeStorage>,
     pub events: Arc<RecordingEvents>,
     pub clock: Arc<FakeClock>,
@@ -761,6 +897,13 @@ impl Harness {
         let reactions = Arc::new(InMemoryReactions::default());
         let pins = Arc::new(InMemoryPins::default());
         let read_states = Arc::new(InMemoryReadStates::default());
+        let notification_recipients = Arc::new(FakeNotificationRecipients {
+            recipients: Mutex::new(vec![notification_recipient(ALICE), notification_recipient(BOB)]),
+            error: Mutex::new(None),
+            calls: Mutex::new(Vec::new()),
+            hidden: Mutex::default(),
+            access: access.clone(),
+        });
         let storage = Arc::new(FakeStorage::default());
         let events = Arc::new(RecordingEvents::default());
         let clock = Arc::new(FakeClock(AtomicU64::new(START_MS)));
@@ -779,6 +922,7 @@ impl Harness {
             reactions: reactions.clone(),
             pins: pins.clone(),
             read_states: read_states.clone(),
+            notification_recipients: notification_recipients.clone(),
             activity: Arc::new(InMemoryActivity::default()),
             storage: storage.clone(),
             events: events.clone(),
@@ -795,6 +939,7 @@ impl Harness {
             reactions,
             pins,
             read_states,
+            notification_recipients,
             storage,
             events,
             clock,

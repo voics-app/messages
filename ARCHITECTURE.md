@@ -45,6 +45,14 @@ C4Component
 
 ## Decisions
 
+- **Read accounting.** Per-message ledger, generation contributions and versioned metadata share
+  a user/channel partition in a companion vnode keyspace on the existing Scylla cluster. LWT
+  batches serialize mention/ACK/manual-unread changes; the original table remains discovery and
+  legacy baseline. Current permitted recipients come from API independently of push tokens.
+  The [migration and recovery requirements](docs/read-accounting.md) prohibit mixed old/new
+  writers and require paired-keyspace backups. Message storage and accounting remain separate
+  best-effort operations.
+
 - **Bucketed partitions.** Messages are keyed by `(channel_id, 10-day bucket)`. Paging walks
   buckets backwards from the channel's last message until the page is full or the creation
   bucket is reached.

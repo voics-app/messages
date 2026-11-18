@@ -9,6 +9,7 @@ mod clock;
 mod events;
 mod ids;
 mod messages;
+mod notification_recipients;
 mod pins;
 mod reactions;
 mod read_states;
@@ -24,6 +25,9 @@ pub use clock::Clock;
 pub use events::{EventPublisher, EventSink, MessageEvent, MessageEventKind};
 pub use ids::IdGenerator;
 pub use messages::{BucketQuery, MessageRepository};
+pub use notification_recipients::{
+    NotificationRecipient, NotificationRecipientPage, NotificationRecipients, RecipientQuery,
+};
 pub use pins::{Pin, PinRepository};
 pub use reactions::ReactionRepository;
 pub use read_states::ReadStateRepository;

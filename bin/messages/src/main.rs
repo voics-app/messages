@@ -13,7 +13,9 @@ use config::{Config, Environment};
 use discordy_messages_application::ports::{BackfillState, SearchIndex};
 use discordy_messages_application::use_cases::{MessagingPorts, PurgeAuthorMessages};
 use discordy_messages_application::{HistoryReader, PortError};
-use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
+use discordy_messages_infrastructure::api::{
+    HttpChannelAccess, HttpNotificationRecipients, HttpUserDirectory, InternalApi, TokenAuthenticator,
+};
 use discordy_messages_infrastructure::ban_purge;
 use discordy_messages_infrastructure::kafka::KafkaEventSink;
 use discordy_messages_infrastructure::scylla::{
@@ -26,7 +28,7 @@ use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
 use discordy_messages_infrastructure::unfurl::{HttpLinkUnfurler, HttpMediaFetcher, SafeHttp, SsrfPolicy};
 use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
-use probes::{IdProbe, KafkaProbe, ScyllaProbe};
+use probes::{IdProbe, KafkaProbe, ReadStateProbe, ScyllaProbe};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -88,6 +90,8 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     let session = scylla::connect(&config.scylla_nodes, &config.scylla_keyspace).await?;
     let messages = Arc::new(ScyllaMessageRepository::new(session.clone()).await?);
     let reactions = Arc::new(ScyllaReactionRepository::new(session.clone()).await?);
+    let read_states =
+        Arc::new(ScyllaReadStateRepository::open(session.clone(), config.scylla_read_state_keyspace.as_deref()).await?);
     let kafka = Arc::new(KafkaEventSink::connect(config.kafka_brokers.clone()).await?);
 
     let storage = S3AttachmentStorage::new(
@@ -136,11 +140,12 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     )?;
     let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
+        notification_recipients: Arc::new(HttpNotificationRecipients(api.clone())),
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
         reactions: reactions.clone(),
         pins: Arc::new(ScyllaPinRepository::new(session.clone()).await?),
-        read_states: Arc::new(ScyllaReadStateRepository::new(session.clone()).await?),
+        read_states: read_states.clone(),
         activity: Arc::new(ScyllaActivityRepository::new(session.clone()).await?),
         storage: Arc::new(storage),
         events: Arc::new(EnvelopePublisher::new(
@@ -158,6 +163,7 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     };
     let probes: Vec<Arc<dyn ReadinessCheck>> = vec![
         Arc::new(ScyllaProbe(session)),
+        Arc::new(ReadStateProbe(read_states)),
         Arc::new(KafkaProbe(kafka)),
         Arc::new(IdProbe(ids)),
     ];
