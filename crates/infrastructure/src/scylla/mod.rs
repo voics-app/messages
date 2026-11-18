@@ -4,6 +4,7 @@ mod activity;
 mod messages;
 mod migrations;
 mod pins;
+mod poll_definition;
 mod polls;
 mod reactions;
 mod read_states;

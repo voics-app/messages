@@ -159,6 +159,9 @@ is reported at once.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
+The [persistent polls implementation](docs/polls.md) describes the current draft
+scope, authorization, storage boundaries and contract validation commands.
+
 ## Git hooks
 
 Tests run locally, not in CI. Install [lefthook](https://github.com/evilmartians/lefthook) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.

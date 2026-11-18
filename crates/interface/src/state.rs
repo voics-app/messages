@@ -30,6 +30,7 @@ impl InternalToken {
 }
 
 pub struct UseCases {
+    pub polls: Option<discordy_messages_application::polls::Polls>,
     pub create_message: CreateMessage,
     pub edit_message: EditMessage,
     pub delete_message: DeleteMessage,
@@ -58,6 +59,7 @@ pub struct UseCases {
 impl UseCases {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            polls: discordy_messages_application::polls::Polls::new(ports),
             create_message: CreateMessage::new(ports),
             edit_message: EditMessage::new(ports),
             delete_message: DeleteMessage::new(ports),

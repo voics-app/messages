@@ -23,6 +23,18 @@ pub enum MessageEventKind {
     Updated {
         message: Message,
     },
+    PollVoteChanged {
+        message_id: MessageId,
+        user_id: UserId,
+        answer_id: u8,
+        selected: bool,
+        voter: discordy_messages_domain::poll::PollVote,
+        results: discordy_messages_domain::poll::PollAggregate,
+    },
+    PollFinalized {
+        message: Message,
+        results: discordy_messages_domain::poll::PollAggregate,
+    },
     Deleted {
         message_id: MessageId,
     },

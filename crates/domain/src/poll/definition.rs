@@ -61,6 +61,21 @@ fn text(value: &str, field: &str, maximum: usize) -> Result<(), PollError> {
 }
 
 impl PollDefinition {
+    /// Also used when loading persisted definitions before exposing them.
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if !(1..=253_402_300_799_999).contains(&self.expires_at_ms) {
+            return Err(DomainError::invalid(
+                "poll.expiry",
+                "must be a supported RFC3339 instant",
+            ));
+        }
+        match Self::new(self.draft(), 0) {
+            Ok(_) => Ok(()),
+            Err(PollError::Invalid(error)) => Err(error),
+            Err(_) => Err(DomainError::invalid("poll", "invalid persisted definition")),
+        }
+    }
+
     pub fn new(draft: PollDraft, now_ms: i64) -> Result<Self, PollError> {
         text(&draft.question, "poll.question.text", 300)?;
         if !(2..=10).contains(&draft.answers.len()) {
@@ -75,6 +90,9 @@ impl PollDefinition {
         let expires_at_ms = now_ms
             .checked_add(i64::from(draft.duration_hours) * 3_600_000)
             .ok_or(PollError::Exhausted)?;
+        if now_ms < 0 || expires_at_ms > 253_402_300_799_999 {
+            return Err(DomainError::invalid("poll.expiry", "must be a supported RFC3339 instant").into());
+        }
         Ok(Self {
             question: draft.question,
             answers: draft.answers,

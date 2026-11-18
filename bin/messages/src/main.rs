@@ -140,6 +140,8 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     )?;
     let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
+        polls: None,
+        poll_creation_enabled: false,
         notification_recipients: Arc::new(HttpNotificationRecipients(api.clone())),
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),

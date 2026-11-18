@@ -200,6 +200,7 @@ pub fn message_dto(
                 avatar_url: w.avatar_url.clone(),
             }),
         hit: None,
+        poll: message.poll.as_ref().map(crate::poll_dto::definition),
     }
 }
 

@@ -1,5 +1,9 @@
 //! In-memory port implementations for use case tests.
 
+#[path = "polls/fakes.rs"]
+mod polls;
+pub use polls::InMemoryPolls;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -931,6 +935,8 @@ impl Harness {
         let search = Arc::new(FakeSearchIndex::default());
         let unfurler = Arc::new(FakeUnfurler::default());
         let ports = MessagingPorts {
+            polls: None,
+            poll_creation_enabled: false,
             access: access.clone(),
             messages: messages.clone(),
             reactions: reactions.clone(),

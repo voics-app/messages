@@ -18,6 +18,7 @@ impl Permissions {
     pub const READ_MESSAGE_HISTORY: u64 = 1 << 16;
     pub const MENTION_EVERYONE: u64 = 1 << 17;
     pub const SEND_MESSAGES_IN_THREADS: u64 = 1 << 38;
+    pub const SEND_POLLS: u64 = 1 << 49;
     pub const PIN_MESSAGES: u64 = 1 << 51;
 
     pub const fn new(bits: u64) -> Self {

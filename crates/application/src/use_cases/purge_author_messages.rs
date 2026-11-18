@@ -28,6 +28,7 @@ pub struct PurgeReport {
 /// bans a member with "delete message history". Each channel gets MESSAGE_DELETE_BULK events;
 /// the search index follows from them. Safe to run twice: a replay finds nothing left.
 pub struct PurgeAuthorMessages {
+    polls: Option<Arc<dyn crate::ports::PollRepository>>,
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
     reactions: Arc<dyn ReactionRepository>,
@@ -40,6 +41,7 @@ pub struct PurgeAuthorMessages {
 impl PurgeAuthorMessages {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            polls: ports.polls.clone(),
             access: ports.access.clone(),
             messages: ports.messages.clone(),
             reactions: ports.reactions.clone(),
@@ -65,6 +67,9 @@ impl PurgeAuthorMessages {
             }
             report.channels += 1;
             let ids: Vec<MessageId> = found.iter().map(|m| m.id).collect();
+            for message in &found {
+                super::support::fence_poll(self.polls.as_deref(), message).await?;
+            }
             self.messages.delete(channel_id, &ids).await?;
             for message in &found {
                 purge_dependents(

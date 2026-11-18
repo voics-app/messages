@@ -98,6 +98,21 @@ impl EnvelopePublisher {
                 event_type::MESSAGE_UPDATE,
                 encode(&message_dto(message, &[], event.guild_id, None, &self.urls, authors))?,
             ),
+            MessageEventKind::PollVoteChanged { selected, .. } => (
+                if *selected {
+                    event_type::MESSAGE_POLL_VOTE_ADD
+                } else {
+                    event_type::MESSAGE_POLL_VOTE_REMOVE
+                },
+                crate::poll_dto::vote_event(event)?,
+            ),
+            MessageEventKind::PollFinalized { message, results } => {
+                let mut dto = message_dto(message, &[], event.guild_id, None, &self.urls, authors);
+                if let Some(poll) = &mut dto.poll {
+                    poll["results"] = crate::poll_dto::results(results, crate::poll_dto::PollViewer::Unknown);
+                }
+                (event_type::MESSAGE_UPDATE, encode(&dto)?)
+            }
             MessageEventKind::Deleted { message_id } => (
                 event_type::MESSAGE_DELETE,
                 encode(&MessageDeleteData {
@@ -181,9 +196,9 @@ fn encode(value: &impl Serialize) -> Result<Value, PortError> {
 impl EventPublisher for EnvelopePublisher {
     async fn publish(&self, event: MessageEvent) -> Result<(), PortError> {
         let authors = match &event.kind {
-            MessageEventKind::Created { message, .. } | MessageEventKind::Updated { message } => {
-                resolve(self.users.as_ref(), [message]).await
-            }
+            MessageEventKind::Created { message, .. }
+            | MessageEventKind::Updated { message }
+            | MessageEventKind::PollFinalized { message, .. } => resolve(self.users.as_ref(), [message]).await,
             _ => Authors::new(),
         };
         let envelope = self.envelope(&event, &authors)?;

@@ -4,7 +4,7 @@ use discordy_messages_domain::{ChannelId, MessageId, UserId};
 
 use crate::PortError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PollKey {
     pub channel_id: ChannelId,
     pub message_id: MessageId,

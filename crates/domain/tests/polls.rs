@@ -1,6 +1,104 @@
 use discordy_messages_domain::poll::{
     MAX_PARTICIPANTS, PollAggregate, PollDefinition, PollDraft, PollError, PollMedia, PollStatus, PollVote,
 };
+use discordy_messages_domain::{
+    ChannelAccess, DeliveryMode, DomainError, Message, MessageDraft, MessageEdit, MessageKind, Permissions, Snowflake,
+};
+
+#[test]
+fn poll_permissions_follow_normal_thread_attachment_and_private_mode_rules() {
+    let mut access = ChannelAccess {
+        permissions: Permissions::new(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES),
+        guild_id: Some(Snowflake::new(1)),
+        channel_type: 0,
+        delivery_mode: DeliveryMode::Standard,
+        recipient_ids: vec![],
+    };
+    assert_eq!(
+        access.ensure_can_create_poll(false),
+        Err(DomainError::MissingPermissions)
+    );
+    access.permissions = Permissions::new(access.permissions.bits() | Permissions::SEND_POLLS);
+    assert!(access.ensure_can_create_poll(false).is_ok());
+    assert_eq!(
+        access.ensure_can_create_poll(true),
+        Err(DomainError::MissingPermissions)
+    );
+    access.channel_type = 11;
+    assert_eq!(
+        access.ensure_can_create_poll(false),
+        Err(DomainError::MissingPermissions)
+    );
+    access.permissions =
+        Permissions::new(Permissions::VIEW_CHANNEL | Permissions::SEND_POLLS | Permissions::SEND_MESSAGES_IN_THREADS);
+    assert!(access.ensure_can_create_poll(false).is_ok());
+    for mode in [DeliveryMode::Ephemeral, DeliveryMode::P2p] {
+        access.delivery_mode = mode;
+        access.permissions = Permissions::new(Permissions::ADMINISTRATOR);
+        assert_eq!(
+            access.ensure_can_create_poll(false),
+            Err(DomainError::DeliveryModeConflict(mode))
+        );
+        assert_eq!(
+            access.ensure_can_read_poll(),
+            Err(DomainError::DeliveryModeConflict(mode))
+        );
+    }
+}
+
+#[test]
+fn poll_only_message_survives_content_edits_but_not_system_or_ephemeral_creation() {
+    let draft = MessageDraft {
+        poll: Some(definition(false)),
+        ..Default::default()
+    };
+    let mut message = Message::compose(
+        Snowflake::new(3),
+        Snowflake::new(2),
+        Snowflake::new(1),
+        draft.clone(),
+        false,
+    )
+    .unwrap();
+    message
+        .apply_edit(
+            Snowflake::new(1),
+            MessageEdit {
+                content: Some(String::new()),
+                ..Default::default()
+            },
+            false,
+            2_000,
+        )
+        .unwrap();
+    assert_eq!(message.poll, Some(definition(false)));
+    assert!(
+        Message::compose(
+            Snowflake::new(3),
+            Snowflake::new(2),
+            Snowflake::new(1),
+            MessageDraft {
+                system_kind: Some(MessageKind::Call),
+                ..draft.clone()
+            },
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        Message::compose(
+            Snowflake::new(3),
+            Snowflake::new(2),
+            Snowflake::new(1),
+            MessageDraft {
+                flags: discordy_messages_domain::FLAG_EPHEMERAL,
+                ..draft
+            },
+            false
+        )
+        .is_err()
+    );
+}
 
 fn definition(multiple: bool) -> PollDefinition {
     PollDefinition::new(

@@ -4,6 +4,7 @@
 pub mod coalescer;
 pub mod error;
 pub mod history_reader;
+pub mod polls;
 pub mod ports;
 pub mod rate_limit;
 pub mod use_cases;

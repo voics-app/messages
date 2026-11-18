@@ -34,6 +34,12 @@ fn internal_command(
     channel_id: discordy_messages_domain::ChannelId,
     body: InternalCreateMessageRequest,
 ) -> Result<CreateMessageCommand, ApiError> {
+    if body.poll.is_some() {
+        return Err(ApiError::invalid(
+            "poll",
+            "internal/webhook/interaction poll creation is unsupported",
+        ));
+    }
     let author_id = parse_id("author_id", &body.author_id)?;
     let webhook = match body.webhook_id {
         Some(raw) => Some(WebhookAuthor {
