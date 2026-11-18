@@ -260,7 +260,7 @@ impl CreateMessage {
                 .ok_or_else(|| crate::PortError::new("poll storage is unavailable"))?
                 .initialize(
                     PollKey {
-                        channel_id,
+                        channel_id: message.channel_id,
                         message_id: message.id,
                     },
                     poll,

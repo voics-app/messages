@@ -70,6 +70,20 @@ pub(super) fn snapshot(rows: Vec<StoredRow>) -> PollStoreResult<Option<PollSnaps
         }
     }
     let aggregate = aggregate.ok_or(PollError::Corrupt)?;
+    if let Some(vote) = &voter
+        && aggregate.status != PollStatus::Deleted
+        && (vote.revision > aggregate.version
+            || aggregate.participants == 0
+            || vote.mask >= (1 << aggregate.counts.len())
+            || (!aggregate.allow_multiselect && vote.mask.count_ones() > 1)
+            || aggregate
+                .counts
+                .iter()
+                .enumerate()
+                .any(|(index, count)| vote.mask & (1 << index) != 0 && *count == 0))
+    {
+        return Err(PollError::Corrupt.into());
+    }
     Ok(Some(PollSnapshotState { aggregate, voter }))
 }
 

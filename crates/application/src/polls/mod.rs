@@ -1,7 +1,13 @@
 //! Poll commands authorize fresh channel access before reading or mutating.
+mod expiry;
 #[cfg(test)]
 mod tests;
+mod work_queue;
+mod worker;
+#[cfg(test)]
+mod worker_tests;
 use std::sync::Arc;
+pub use worker::{PollScan, PollWorker};
 
 use discordy_messages_domain::poll::{PollAggregate, PollStatus, PollTransition};
 use discordy_messages_domain::{ChannelAccess, DomainError, Message};
@@ -20,6 +26,7 @@ pub struct PollView {
     pub state: PollSnapshotState,
 }
 
+#[derive(Clone)]
 pub struct Polls {
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
