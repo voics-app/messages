@@ -29,6 +29,8 @@ pub struct Config {
     pub kafka_brokers: Vec<String>,
     pub scylla_nodes: Vec<String>,
     pub scylla_keyspace: String,
+    /// Separate vnode keyspace for atomic read state; defaults to <main>_reads.
+    pub scylla_read_state_keyspace: Option<String>,
     pub api_internal_url: String,
     pub minio_endpoint: String,
     pub minio_access_key: String,
@@ -84,6 +86,7 @@ impl Config {
             kafka_brokers: reader.list("KAFKA_BROKERS"),
             scylla_nodes: reader.list("SCYLLA_NODES"),
             scylla_keyspace: reader.optional("SCYLLA_KEYSPACE", "discordy"),
+            scylla_read_state_keyspace: reader.value("SCYLLA_READ_STATE_KEYSPACE"),
             api_internal_url: reader.url("API_INTERNAL_URL"),
             minio_endpoint: reader.url("MINIO_ENDPOINT"),
             minio_access_key: reader.required("MINIO_ACCESS_KEY"),

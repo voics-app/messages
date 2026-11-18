@@ -10,6 +10,19 @@ use discordy_messages_interface::ReadinessCheck;
 
 pub struct ScyllaProbe(pub Arc<scylla::Session>);
 
+pub struct ReadStateProbe(pub Arc<scylla::ScyllaReadStateRepository>);
+
+#[async_trait]
+impl ReadinessCheck for ReadStateProbe {
+    fn name(&self) -> &'static str {
+        "read_states"
+    }
+
+    async fn check(&self) -> Result<(), PortError> {
+        self.0.check_ready().await
+    }
+}
+
 #[async_trait]
 impl ReadinessCheck for ScyllaProbe {
     fn name(&self) -> &'static str {

@@ -4,18 +4,18 @@ use std::sync::Arc;
 use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
-    Attachment, Audience, Call, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, FLAG_SUPPRESS_NOTIFICATIONS,
-    ForwardOrigin, InteractionLink, Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, ReadState,
-    UploadKey, UserId, WebhookAuthor,
+    Attachment, Audience, Call, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, ForwardOrigin, InteractionLink,
+    Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, UploadKey, UserId, WebhookAuthor,
 };
 
 use super::MessagingPorts;
 use super::UnfurlLinks;
+use super::record_mentions::RecordMentions;
 use super::support::{announce, checked_access, event};
 use crate::error::AppResult;
 use crate::ports::{
     ActivityRepository, AttachmentStorage, ChannelAccessProvider, EventPublisher, IdGenerator, MessageEvent,
-    MessageEventKind, MessageRepository, ReadStateRepository,
+    MessageEventKind, MessageRepository,
 };
 use crate::views::MessageView;
 
@@ -73,7 +73,7 @@ pub struct CreateMessageCommand {
 pub struct CreateMessage {
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
-    read_states: Arc<dyn ReadStateRepository>,
+    mentions: RecordMentions,
     activity: Arc<dyn ActivityRepository>,
     storage: Arc<dyn AttachmentStorage>,
     events: Arc<dyn EventPublisher>,
@@ -93,12 +93,16 @@ fn ensure_tts_permission(access: &ChannelAccess, tts: bool) -> Result<(), Domain
     }
 }
 
+#[cfg(test)]
+#[path = "create_message_mentions.rs"]
+mod mention_tests;
+
 impl CreateMessage {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
             access: ports.access.clone(),
             messages: ports.messages.clone(),
-            read_states: ports.read_states.clone(),
+            mentions: RecordMentions::new(ports),
             activity: ports.activity.clone(),
             storage: ports.storage.clone(),
             events: ports.events.clone(),
@@ -220,7 +224,7 @@ impl CreateMessage {
         let nonce = command.nonce.clone();
         let message = self.compose_message(access, &command, forward).await?;
         self.messages.insert(&message).await?;
-        self.record_side_effects(&message).await;
+        self.record_side_effects(&message, access.guild_id).await;
         announce(
             self.events.as_ref(),
             event(
@@ -341,29 +345,13 @@ impl CreateMessage {
 
     /// Admin counters and mention badges. Best effort: the message itself is
     /// already stored.
-    async fn record_side_effects(&self, message: &Message) {
+    async fn record_side_effects(&self, message: &Message, guild: Option<discordy_messages_domain::GuildId>) {
         if let Err(error) = self.activity.record_standard_message(message.id).await {
             tracing::warn!(%error, "failed to record message activity");
         }
-        if message.flags & FLAG_SUPPRESS_NOTIFICATIONS != 0 {
-            return;
+        if let Err(error) = self.mentions.execute(message, guild).await {
+            tracing::warn!(message_id = %message.id, channel_id = %message.channel_id, %error, "failed to record mention accounting");
         }
-        for user_id in message.mentions.users.iter().filter(|u| **u != message.author_id) {
-            if let Err(error) = self.bump_mention(*user_id, message).await {
-                tracing::warn!(%user_id, %error, "failed to record mention");
-            }
-        }
-    }
-
-    async fn bump_mention(&self, user_id: UserId, message: &Message) -> AppResult<()> {
-        let mut state = self
-            .read_states
-            .find(user_id, message.channel_id)
-            .await?
-            .unwrap_or_else(|| ReadState::unread(user_id, message.channel_id));
-        state.record_mention(message.id);
-        self.read_states.save(&state).await?;
-        Ok(())
     }
 }
 
@@ -372,8 +360,10 @@ mod tests {
     use super::*;
     use crate::error::AppError;
     use crate::fakes::*;
-    use crate::ports::AccessError;
-    use discordy_messages_domain::{Audience, DeliveryMode, Permissions, Snowflake};
+    use crate::ports::{AccessError, ReadStateRepository};
+    use discordy_messages_domain::{
+        Audience, DeliveryMode, FLAG_SUPPRESS_NOTIFICATIONS, Permissions, ReadState, Snowflake,
+    };
 
     fn command(content: &str) -> CreateMessageCommand {
         CreateMessageCommand {
@@ -729,17 +719,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn regression_ack_keeps_mentions_newer_than_its_marker() {
+        let h = Harness::new();
+        let create = CreateMessage::new(&h.ports);
+        let first = create.execute(command(&format!("first <@{BOB}>"))).await.unwrap();
+        create.execute(command(&format!("second <@{BOB}>"))).await.unwrap();
+        let ack = super::super::AcknowledgeMessage::new(&h.ports);
+        let state = ack.execute(CHANNEL, first.message.id, BOB).await.unwrap();
+        assert_eq!(state.last_read_id, Some(first.message.id));
+        assert_eq!(state.mention_count, 1, "an ACK cannot clear a newer mention");
+        let stale = ack.execute(CHANNEL, first.message.id, BOB).await.unwrap();
+        assert_eq!(stale.mention_count, 1, "a repeated ACK must preserve newer mentions");
+    }
+
+    #[tokio::test]
+    async fn regression_muted_direct_mentions_do_not_increment_a_badge() {
+        let h = Harness::new();
+        h.notification_recipients.recipients.lock().unwrap()[1].muted = true;
+        CreateMessage::new(&h.ports)
+            .execute(command(&format!("hello <@{BOB}>")))
+            .await
+            .unwrap();
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn regression_replaying_accounting_does_not_count_the_same_message_twice() {
+        let h = Harness::new();
+        let create = CreateMessage::new(&h.ports);
+        let message = create
+            .execute(command(&format!("hello <@{BOB}>")))
+            .await
+            .unwrap()
+            .message;
+        create.record_side_effects(&message, Some(GUILD)).await;
+        assert_eq!(
+            h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap().mention_count,
+            1
+        );
+
+        let ack = super::super::AcknowledgeMessage::new(&h.ports);
+        ack.execute(CHANNEL, message.id, BOB).await.unwrap();
+        ack.execute_manual(CHANNEL, Snowflake::new(message.id.value() - 1), BOB, 2)
+            .await
+            .unwrap();
+        create.record_side_effects(&message, Some(GUILD)).await;
+        assert_eq!(
+            h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap().mention_count,
+            2,
+            "manual unread does not reopen an already-accounted delivery"
+        );
+    }
+
+    #[tokio::test]
+    async fn regression_concurrent_message_creates_do_not_lose_a_mention() {
+        struct SynchronizedReads {
+            inner: Arc<InMemoryReadStates>,
+            barrier: tokio::sync::Barrier,
+        }
+        #[async_trait::async_trait]
+        impl ReadStateRepository for SynchronizedReads {
+            async fn find(&self, user: UserId, channel: ChannelId) -> Result<Option<ReadState>, crate::PortError> {
+                let before = self.inner.find(user, channel).await?;
+                self.barrier.wait().await;
+                Ok(before)
+            }
+            async fn record_mention(
+                &self,
+                user: UserId,
+                channel: ChannelId,
+                message: MessageId,
+            ) -> Result<ReadState, crate::PortError> {
+                self.inner.record_mention(user, channel, message).await
+            }
+            async fn acknowledge(
+                &self,
+                user: UserId,
+                channel: ChannelId,
+                message: MessageId,
+            ) -> Result<ReadState, crate::PortError> {
+                self.inner.acknowledge(user, channel, message).await
+            }
+            async fn set_position(
+                &self,
+                user: UserId,
+                channel: ChannelId,
+                message: MessageId,
+                mentions: u32,
+            ) -> Result<ReadState, crate::PortError> {
+                self.inner.set_position(user, channel, message, mentions).await
+            }
+            async fn for_user(&self, user: UserId) -> Result<Vec<ReadState>, crate::PortError> {
+                self.inner.for_user(user).await
+            }
+        }
+        let mut h = Harness::new();
+        h.ports.read_states = Arc::new(SynchronizedReads {
+            inner: Arc::clone(&h.read_states),
+            barrier: tokio::sync::Barrier::new(2),
+        });
+        let create = CreateMessage::new(&h.ports);
+        let (first, second) = tokio::join!(
+            create.execute(command(&format!("first <@{BOB}>"))),
+            create.execute(command(&format!("second <@{BOB}>"))),
+        );
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(
+            h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap().mention_count,
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn here_is_flagged_on_the_event_so_delivery_can_filter_by_presence() {
         let h = Harness::new();
         h.access.set_permissions(MEMBER | Permissions::MENTION_EVERYONE);
         let use_case = CreateMessage::new(&h.ports);
         let here = use_case.execute(command("@here standup")).await.unwrap().message;
+        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
         let everyone = use_case.execute(command("@everyone standup")).await.unwrap().message;
         assert!(here.mentions.everyone && here.mentions.here);
         assert!(everyone.mentions.everyone && !everyone.mentions.here);
         let stored = h.messages.find(CHANNEL, here.id).await.unwrap().unwrap();
         assert!(stored.mentions.here);
-        assert!(h.read_states.find(BOB, CHANNEL).await.unwrap().is_none());
+        assert_eq!(
+            h.read_states.find(BOB, CHANNEL).await.unwrap().unwrap().mention_count,
+            1
+        );
     }
 
     const TARGET: Snowflake = Snowflake::new(2 << 22);
