@@ -23,6 +23,21 @@ impl ReadinessCheck for ScyllaProbe {
 
 pub struct KafkaProbe(pub Arc<KafkaEventSink>);
 
+pub struct IdProbe(pub Arc<dyn discordy_messages_application::ports::IdGenerator>);
+#[async_trait]
+impl ReadinessCheck for IdProbe {
+    fn name(&self) -> &'static str {
+        "ids"
+    }
+    async fn check(&self) -> Result<(), PortError> {
+        if self.0.is_ready() {
+            Ok(())
+        } else {
+            Err(PortError::new("ID reservation unavailable"))
+        }
+    }
+}
+
 #[async_trait]
 impl ReadinessCheck for KafkaProbe {
     fn name(&self) -> &'static str {

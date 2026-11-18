@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/check-brand.sh
+      - run: python3 scripts/check-snowflake.py
 
   rust:
     permissions:

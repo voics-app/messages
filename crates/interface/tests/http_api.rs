@@ -252,6 +252,42 @@ async fn attachment_metadata_edits_preserve_files_and_can_clear_a_spoiler() {
 }
 
 #[tokio::test]
+async fn expired_id_issuer_returns_503_without_storing_or_announcing() {
+    struct Expired;
+    impl discordy_messages_application::ports::IdGenerator for Expired {
+        fn next_id(&self) -> Result<discordy_messages_domain::Snowflake, PortError> {
+            Err(PortError::new("ID reservation expired"))
+        }
+        fn is_ready(&self) -> bool {
+            false
+        }
+    }
+    let mut harness = Harness::new();
+    harness.ports.ids = Arc::new(Expired);
+    let app = app(&harness);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content":"hello"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(harness.messages.last_message_id(CHANNEL).await.unwrap(), None);
+    assert!(harness.events.kinds().is_empty());
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/api/v1/channels/{CHANNEL}/attachments"),
+        Some(ALICE_TOKEN),
+        Some(json!({"files":[{"id":"0","filename":"image.png","file_size":1}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+}
+
+#[tokio::test]
 async fn requests_without_valid_credentials_are_rejected() {
     let harness = Harness::new();
     let app = app(&harness);
