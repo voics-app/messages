@@ -40,10 +40,23 @@ Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`. Metrics:
 
 ## Notifier (push notifications)
 
-`bin/notifier` (crate `crates/notifier`, image `messages-notifier` from `Dockerfile.notifier`, port 8085) is a second worker in this workspace. It reads `discordy.message.v1` from the end of the topic, and for every `MESSAGE_CREATE` asks the api (`GET /internal/v1/channels/{id}/push-targets`) for the members who can view the channel, hold a push token and are not the author. It then applies the clients' notification rules (`decide`: a live gateway session, mute, level, mention, role, `@everyone`, `@here`, `@silent`, and the device's own "only mentions" preference that travels with its token) and sends the push through APNs with token auth. `fcm` tokens are counted as `unsupported` and not sent yet.
+`bin/notifier` (crate `crates/notifier`, image `messages-notifier` from `Dockerfile.notifier`, port
+8085) reads `discordy.message.v1` from the end of the topic. For each `MESSAGE_CREATE`, the api's
+`GET /internal/v1/channels/{id}/push-targets` resolves viewers who hold a push token and are not
+the author. Notification rules apply mute, level, direct/role/everyone mentions, `@here`, `@silent`
+and each device's only-mentions preference. APNs uses token auth; FCM uses HTTP v1 with cached
+OAuth credentials. A provider without credentials counts `unsupported` while the other still
+works. A live gateway socket does not suppress push because it can belong to a desktop or a
+backgrounded phone; the client handles foreground duplicates.
 
 - **Privacy.** Only a channel whose delivery mode is exactly `standard` may put text (and the author, channel and server names) into a push; anything else, including an unknown mode, gets the title `New message` and no body. A device that turned previews off gets `New message` as the body in standard chats.
-- **Back-pressure (ADR 0016).** Pushes go through a bounded queue (`PUSH_QUEUE_CAPACITY`) and at most `PUSH_MAX_IN_FLIGHT` provider requests at once; a full queue drops the push and counts it (`notifier_pushes_total{outcome="dropped"}`). Provider errors are retried with exponential backoff up to `PUSH_MAX_ATTEMPTS`; a rejected token (APNs 410, `BadDeviceToken`, `DeviceTokenNotForTopic`) is removed through `DELETE /internal/v1/push-tokens`.
+- **Back-pressure (ADR 0016).** The pump acquires a send slot before removing a queued job, so
+  `PUSH_QUEUE_CAPACITY` is the exact waiting-job bound. `PUSH_MAX_IN_FLIGHT` bounds active jobs
+  across providers together, including retry waits; it also bounds each provider connection.
+  A full queue drops new message pushes and counts `notifier_pushes_total{outcome="dropped"}`.
+  Errors retry with exponential backoff up to `PUSH_MAX_ATTEMPTS`; invalid tokens are removed
+  through `DELETE /internal/v1/push-tokens`. Queue/active gauges and configured limits are exposed
+  for the admin Platform health panels. See [the burst check](docs/notifier-backpressure.md).
 - **Sandbox and production.** Each token carries the environment it was issued for (development builds register `sandbox`); the sender uses `api.sandbox.push.apple.com` or `api.push.apple.com` per token. `BadDeviceToken` is what APNs answers when a token reaches the wrong host (an ad-hoc build can carry either kind), so the other host gets one try before the token is removed, and the host that worked is remembered. `APNS_ENVIRONMENT` forces one host for every token and disables the fallback.
 - **Manual push.** `POST /internal/v1/manual-push` (same port, header `X-Internal-Token`, cluster only: no ingress route, a NetworkPolicy admits only the admin pods) sends a notification the owner wrote in the admin portal: `{"target": {"user_id": "123"} | "all", "title" (1-64 chars), "body" (1-240 chars), "dry_run"?: bool, "actor"?: "admin email"}`. Devices come from the api (`GET /internal/v1/users/{id}/push-tokens`, or `GET /internal/v1/push-tokens` in pages) and go through the same bounded queue and `PUSH_MAX_IN_FLIGHT` cap as message pushes; a broadcast waits up to 30 seconds per device for queue room, then drops and counts. Answer: `{devices, queued, dropped, truncated}` (`dry_run` only counts). Only one broadcast to everyone runs at a time (409), and one request covers at most 50000 devices (`truncated`). The push is an alert with data `type=manual` and no channel. Each request is logged (`manual push`, with actor, target, title, counts; never the body) and each queued device counts `notifier_pushes_total{outcome="manual"}`.
 - **One replica.** There is no stored offset and no consumer group: the notifier starts at the end of the topic and ignores events older than `PUSH_MAX_EVENT_AGE_SECS`, so run exactly one replica (the gitops deployment uses `Recreate`).
@@ -68,7 +81,7 @@ Operational: `/healthz`, `/readyz` (ScyllaDB and Redpanda), `/metrics`. Metrics:
 | `PUSH_MAX_EVENT_AGE_SECS` | no | `120` | Older events are not pushed |
 | `PUSH_DEDUPE_CAPACITY` | no | `10000` | Recent event ids remembered |
 
-Endpoints: `/healthz`, `/readyz` (Redpanda), `/metrics`, `POST /internal/v1/manual-push` (internal token). Metrics: `notifier_events_total{result}`, `notifier_decisions_total{verdict}`, `notifier_pushes_total{provider,outcome}` (sent, invalid_token, failed, dropped, unsupported, manual), `notifier_push_retries_total`, `notifier_push_duration_seconds`, `notifier_queue_depth`, `notifier_apns_errors_total{status,reason}`, `notifier_consumer_errors_total`.
+Endpoints: `/healthz`, `/readyz` (Redpanda), `/metrics`, `POST /internal/v1/manual-push` (internal token). Metrics: `notifier_events_total{result}`, `notifier_decisions_total{verdict}`, `notifier_pushes_total{provider,outcome}` (sent, invalid_token, failed, dropped, unsupported, manual), `notifier_push_retries_total`, `notifier_push_duration_seconds`, `notifier_queue_depth`, `notifier_queue_capacity`, `notifier_in_flight`, `notifier_in_flight_limit`, `notifier_apns_errors_total{status,reason}`, `notifier_consumer_errors_total`.
 
 ## Run locally
 
