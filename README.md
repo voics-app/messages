@@ -102,7 +102,7 @@ is reported at once.
 | `BIND_ADDR` | no | `0.0.0.0:8082` | listen address |
 | `INTERNAL_SERVICE_TOKEN` | yes | | shared secret for `/internal/*`, in both directions |
 | `JWT_PUBLIC_KEY` | yes | | Ed25519 public key (PEM) verifying access tokens |
-| `SNOWFLAKE_WORKER_ID` | yes | | 64 to 127 |
+| `SNOWFLAKE_WORKER_ID` | yes | | Preferred messages worker 64–127; allocation uses 65–127 and permanently excludes legacy worker 64; see [ID allocation](docs/id-reservations.md) |
 | `KAFKA_BROKERS` | yes | | comma-separated brokers |
 | `SCYLLA_NODES` | yes | | comma-separated `host:port` |
 | `SCYLLA_KEYSPACE` | no | `discordy` | keyspace (created and migrated at startup) |

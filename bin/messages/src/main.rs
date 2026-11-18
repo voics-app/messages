@@ -26,7 +26,7 @@ use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
 use discordy_messages_infrastructure::unfurl::{HttpLinkUnfurler, HttpMediaFetcher, SafeHttp, SsrfPolicy};
 use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
-use probes::{KafkaProbe, ScyllaProbe};
+use probes::{IdProbe, KafkaProbe, ScyllaProbe};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -105,6 +105,7 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     }
 
     let api = InternalApi::new(http, &config.api_internal_url, config.internal_service_token.clone());
+    let ids = SnowflakeIds::start(api.clone(), config.worker).await?;
     let authenticator = Arc::new(TokenAuthenticator::new(&config.jwt_public_key, api.clone())?);
     let clock = Arc::new(SystemClock);
     let urls = AttachmentUrls::new(
@@ -148,14 +149,18 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
             urls.clone(),
             users.clone(),
         )),
-        ids: Arc::new(SnowflakeIds::new(config.worker)),
+        ids: ids.clone(),
         clock,
         history: Arc::new(HistoryReader::new(messages, reactions)),
         users,
         search: search_index.clone(),
         unfurler: Arc::new(HttpLinkUnfurler::new(outbound)),
     };
-    let probes: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(ScyllaProbe(session)), Arc::new(KafkaProbe(kafka))];
+    let probes: Vec<Arc<dyn ReadinessCheck>> = vec![
+        Arc::new(ScyllaProbe(session)),
+        Arc::new(KafkaProbe(kafka)),
+        Arc::new(IdProbe(ids)),
+    ];
     let state = AppState::new(
         &ports,
         authenticator,

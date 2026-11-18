@@ -452,8 +452,11 @@ pub struct FakeIds {
 }
 
 impl IdGenerator for FakeIds {
-    fn next_id(&self) -> Snowflake {
-        self.generator.lock().unwrap().next_id(self.clock.now_unix_ms())
+    fn next_id(&self) -> Result<Snowflake, PortError> {
+        Ok(self.generator.lock().unwrap().next_id(self.clock.now_unix_ms()))
+    }
+    fn is_ready(&self) -> bool {
+        true
     }
 }
 
@@ -809,7 +812,7 @@ impl Harness {
             content: content.to_owned(),
             ..MessageDraft::default()
         };
-        let message = Message::compose(self.ports.ids.next_id(), CHANNEL, author, draft, false).unwrap();
+        let message = Message::compose(self.ports.ids.next_id().unwrap(), CHANNEL, author, draft, false).unwrap();
         self.messages.insert(&message).await.unwrap();
         message
     }

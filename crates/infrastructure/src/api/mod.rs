@@ -2,6 +2,7 @@
 
 mod authenticator;
 mod channel_access;
+mod id_reservations;
 mod users;
 
 pub use authenticator::TokenAuthenticator;

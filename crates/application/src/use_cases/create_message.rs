@@ -198,7 +198,7 @@ impl CreateMessage {
         let mut copies = Vec::with_capacity(attachments.len());
         for attachment in attachments {
             let copy = Attachment {
-                id: self.ids.next_id(),
+                id: self.ids.next_id()?,
                 ..attachment.clone()
             };
             if self.storage.copy(&attachment.key(from), &copy.key(to)).await? {
@@ -290,7 +290,7 @@ impl CreateMessage {
             forward,
         };
         Ok(Message::compose(
-            self.ids.next_id(),
+            self.ids.next_id()?,
             command.channel_id,
             command.author_id,
             draft,
@@ -416,6 +416,30 @@ mod tests {
         let h = Harness::new();
         let view = CreateMessage::new(&h.ports).execute(command("hi")).await.unwrap();
         assert_eq!((view.message.id.value() >> 12) & 0x3FF, 64);
+    }
+
+    #[tokio::test]
+    async fn unavailable_ids_store_and_publish_nothing() {
+        struct Expired;
+        impl IdGenerator for Expired {
+            fn next_id(&self) -> Result<Snowflake, crate::PortError> {
+                Err(crate::PortError::new("ID reservation expired"))
+            }
+            fn is_ready(&self) -> bool {
+                false
+            }
+        }
+        let mut h = Harness::new();
+        h.ports.ids = Arc::new(Expired);
+        let result = CreateMessage::new(&h.ports).execute(command("hello")).await;
+        assert!(matches!(result, Err(AppError::Unavailable(_))));
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+        assert!(h.events.kinds().is_empty());
+        let result = CreateMessage::new(&h.ports)
+            .execute_internal(ephemeral_reply(vec![BOB]))
+            .await;
+        assert!(matches!(result, Err(AppError::Unavailable(_))));
+        assert!(h.events.kinds().is_empty());
     }
 
     #[tokio::test]
