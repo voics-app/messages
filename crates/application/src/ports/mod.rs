@@ -14,6 +14,7 @@ mod pins;
 mod polls;
 mod reactions;
 mod read_states;
+pub mod scheduled;
 mod search;
 mod unfurl;
 mod users;

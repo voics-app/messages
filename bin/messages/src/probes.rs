@@ -12,6 +12,24 @@ pub struct ScyllaProbe(pub Arc<scylla::Session>);
 
 pub struct ReadStateProbe(pub Arc<scylla::ScyllaReadStateRepository>);
 
+pub struct ScheduledProbe {
+    pub repository: Arc<scylla::ScyllaScheduledMessages>,
+    pub running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait]
+impl ReadinessCheck for ScheduledProbe {
+    fn name(&self) -> &'static str {
+        "scheduled_messages"
+    }
+    async fn check(&self) -> Result<(), PortError> {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(PortError::new("scheduled worker is not running"));
+        }
+        self.repository.check_ready().await
+    }
+}
+
 #[async_trait]
 impl ReadinessCheck for ReadStateProbe {
     fn name(&self) -> &'static str {

@@ -7,6 +7,7 @@ pub mod history_reader;
 pub mod polls;
 pub mod ports;
 pub mod rate_limit;
+pub mod scheduled;
 pub mod use_cases;
 pub mod views;
 

@@ -8,7 +8,9 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{delete, get, patch, post, put};
 
-use crate::routes::{attachments, download, external, health, internal, messages, pins, polls, reactions, search};
+use crate::routes::{
+    attachments, download, external, health, internal, messages, pins, polls, reactions, scheduled, search,
+};
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -19,6 +21,14 @@ pub fn router(state: AppState) -> Router {
             put(polls::select).delete(polls::remove),
         )
         .route("/channels/{channel_id}/polls/{message_id}/expire", post(polls::expire))
+        .route(
+            "/channels/{channel_id}/messages/scheduled",
+            get(scheduled::inspect_list).post(scheduled::create),
+        )
+        .route(
+            "/channels/{channel_id}/messages/scheduled/{schedule_id}",
+            get(scheduled::inspect).patch(scheduled::edit).delete(scheduled::cancel),
+        )
         .route("/guilds/{guild_id}/messages/search", get(search::guild))
         .route("/channels/{channel_id}/messages/search", get(search::channel))
         .route(

@@ -685,7 +685,11 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "reqwest",
+ "scylla",
+ "serde_json",
+ "testcontainers",
  "thiserror 2.0.21",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -701,6 +705,7 @@ dependencies = [
  "discordy-messages-domain",
  "futures",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -714,6 +719,7 @@ dependencies = [
  "regress",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -768,6 +774,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "discordy-messages-application",
  "discordy-messages-contracts",
  "discordy-messages-domain",

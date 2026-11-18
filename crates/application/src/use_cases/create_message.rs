@@ -103,6 +103,9 @@ fn ensure_tts_permission(access: &ChannelAccess, tts: bool) -> Result<(), Domain
 #[path = "create_message_mentions.rs"]
 mod mention_tests;
 
+#[path = "create_message_scheduled.rs"]
+mod scheduled;
+
 impl CreateMessage {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
@@ -249,7 +252,6 @@ impl CreateMessage {
         command: CreateMessageCommand,
         forward: Option<ForwardOrigin>,
     ) -> AppResult<MessageView> {
-        let channel_id = command.channel_id;
         let nonce = command.nonce.clone();
         let message = self.compose_message(access, &command, forward).await?;
         if let Some(poll) = &message.poll {
@@ -266,12 +268,17 @@ impl CreateMessage {
                 .await?;
         }
         self.messages.insert(&message).await?;
-        self.record_side_effects(&message, access.guild_id).await;
+        self.publish_stored(&message, access, nonce).await;
+        Ok(MessageView::without_reactions(message))
+    }
+
+    async fn publish_stored(&self, message: &Message, access: &ChannelAccess, nonce: Option<String>) {
+        self.record_side_effects(message, access.guild_id).await;
         announce(
             self.events.as_ref(),
             event(
                 access,
-                channel_id,
+                message.channel_id,
                 MessageEventKind::Created {
                     message: message.clone(),
                     nonce,
@@ -279,8 +286,7 @@ impl CreateMessage {
             ),
         )
         .await;
-        self.unfurl.spawn(&message);
-        Ok(MessageView::without_reactions(message))
+        self.unfurl.spawn(message);
     }
 
     /// Ephemeral replies reach only their targets and are never stored, so

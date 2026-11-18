@@ -100,7 +100,10 @@ pub struct Shared {
 }
 
 #[derive(Clone)]
-pub struct AppState(Arc<Shared>);
+pub struct AppState {
+    shared: Arc<Shared>,
+    pub scheduled: Option<Arc<discordy_messages_application::scheduled::ScheduledMessages>>,
+}
 
 impl AppState {
     pub fn new(
@@ -112,17 +115,28 @@ impl AppState {
         readiness: Vec<Arc<dyn ReadinessCheck>>,
         metrics: Metrics,
     ) -> Self {
-        Self(Arc::new(Shared {
-            use_cases: UseCases::new(ports),
-            authenticator,
-            internal_token,
-            urls,
-            media,
-            storage: ports.storage.clone(),
-            users: ports.users.clone(),
-            readiness,
-            metrics,
-        }))
+        Self {
+            shared: Arc::new(Shared {
+                use_cases: UseCases::new(ports),
+                authenticator,
+                internal_token,
+                urls,
+                media,
+                storage: ports.storage.clone(),
+                users: ports.users.clone(),
+                readiness,
+                metrics,
+            }),
+            scheduled: None,
+        }
+    }
+
+    pub fn with_scheduled(
+        mut self,
+        scheduled: Arc<discordy_messages_application::scheduled::ScheduledMessages>,
+    ) -> Self {
+        self.scheduled = Some(scheduled);
+        self
     }
 }
 
@@ -130,6 +144,6 @@ impl std::ops::Deref for AppState {
     type Target = Shared;
 
     fn deref(&self) -> &Shared {
-        &self.0
+        &self.shared
     }
 }

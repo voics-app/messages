@@ -19,6 +19,7 @@ pub mod permissions;
 pub mod poll;
 pub mod reaction;
 pub mod read_state;
+pub mod scheduled;
 pub mod search;
 pub mod snowflake;
 
