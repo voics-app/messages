@@ -41,6 +41,7 @@ pub(crate) struct MessageRow {
     #[scylla(rename = "type")]
     kind: Option<i32>,
     content: Option<String>,
+    tts: Option<bool>,
     attachments: Option<Vec<AttachmentUdt>>,
     embeds: Option<String>,
     components: Option<String>,
@@ -70,10 +71,10 @@ pub(crate) struct MessageRow {
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id,      mention_here";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 29;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 30;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -84,6 +85,7 @@ impl MessageRow {
             author_id: Some(id(message.author_id)),
             kind: Some(i32::from(message.kind.code())),
             content: Some(message.content.clone()),
+            tts: Some(message.tts),
             attachments: Some(message.attachments.iter().map(attachment_udt).collect()),
             embeds: Some(json_array(&message.embeds)),
             components: Some(json_array(&message.components)),
@@ -137,6 +139,7 @@ impl MessageRow {
             author_id: snowflake(author_id),
             kind,
             content: self.content.unwrap_or_default(),
+            tts: self.tts.unwrap_or(false),
             attachments: self
                 .attachments
                 .unwrap_or_default()
@@ -203,7 +206,7 @@ impl ReadStateRow {
     }
 }
 
-fn attachment_udt(attachment: &Attachment) -> AttachmentUdt {
+pub(crate) fn attachment_udt(attachment: &Attachment) -> AttachmentUdt {
     AttachmentUdt {
         id: id(attachment.id),
         filename: attachment.filename.as_str().to_owned(),
@@ -341,6 +344,7 @@ mod tests {
     fn messages_round_trip_through_rows() {
         let draft = MessageDraft {
             content: "hi <@7> <@&8>".into(),
+            tts: true,
             attachments: vec![Attachment {
                 id: Snowflake::new(3),
                 filename: AttachmentFilename::parse("a.png").unwrap(),
@@ -371,6 +375,24 @@ mod tests {
         let row = MessageRow::from_message(&message);
         assert_eq!(row.bucket, Bucket::of(message.id).value());
         assert_eq!(row.into_message().unwrap(), message);
+    }
+
+    #[test]
+    fn messages_written_before_tts_migration_default_to_false() {
+        let message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            MessageDraft {
+                content: "old row".into(),
+                ..MessageDraft::default()
+            },
+            false,
+        )
+        .unwrap();
+        let mut row = MessageRow::from_message(&message);
+        row.tts = None;
+        assert!(!row.into_message().unwrap().tts);
     }
 
     #[test]

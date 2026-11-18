@@ -65,7 +65,8 @@ fn attachment_dto(channel_id: ChannelId, attachment: &Attachment, urls: &Attachm
         width: attachment.width,
         height: attachment.height,
         description: attachment.description.clone(),
-        flags: (attachment.flags != 0).then_some(attachment.flags),
+        // Explicit zero overrides a legacy SPOILER_ filename after a metadata edit.
+        flags: Some(attachment.flags),
     }
 }
 
@@ -156,7 +157,7 @@ pub fn message_dto(
         content: message.content.clone(),
         timestamp: rfc3339(message.timestamp_ms()),
         edited_timestamp: message.edited_at_ms.map(rfc3339),
-        tts: false,
+        tts: message.tts,
         mention_everyone: message.mentions.everyone,
         mention_here: message.mentions.here,
         mentions: message

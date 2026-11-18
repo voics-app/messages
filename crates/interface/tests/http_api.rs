@@ -141,6 +141,117 @@ fn messages_uri() -> String {
 }
 
 #[tokio::test]
+async fn tts_is_persisted_returned_and_gated_by_permission() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | (1 << 12));
+    let app = app(&harness);
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "read this aloud", "tts": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["tts"], true);
+    assert!(matches!(&harness.events.kinds()[0],
+        discordy_messages_application::ports::MessageEventKind::Created { message, .. } if message.tts));
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["tts"], true);
+
+    harness.access.set_permissions(MEMBER);
+    let (status, denied) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "not permitted", "tts": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    let (_, normal) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "normal message"})),
+    )
+    .await;
+    assert_eq!(normal["tts"], false);
+}
+
+#[tokio::test]
+async fn attachment_metadata_edits_preserve_files_and_can_clear_a_spoiler() {
+    let harness = Harness::new();
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/77/SPOILER_cat.png"), b"meow");
+    let app = app(&harness);
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "look", "attachments": [{
+            "uploaded_filename": format!("attachments/{CHANNEL}/77/SPOILER_cat.png"),
+            "description": "old alt text"
+        }]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = format!("{}/{}", messages_uri(), created["id"].as_str().unwrap());
+    let (status, edited) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"id": "77", "description": " a sleeping cat ", "flags": 0}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(edited["attachments"][0]["description"], "a sleeping cat");
+    assert_eq!(edited["attachments"][0]["flags"], 0);
+    assert_eq!(edited["attachments"][0]["url"], created["attachments"][0]["url"]);
+    assert!(edited["edited_timestamp"].is_string());
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["attachments"], edited["attachments"]);
+    let (_, cleared) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"id": "77", "description": null, "flags": 8}]})),
+    )
+    .await;
+    assert!(cleared["attachments"][0]["description"].is_null());
+    assert_eq!(cleared["attachments"][0]["flags"], 8);
+    assert!(matches!(&harness.events.kinds().last().unwrap(),
+        discordy_messages_application::ports::MessageEventKind::Updated { message }
+        if message.attachments[0].description.is_none() && message.attachments[0].flags == 8));
+    for invalid in [
+        json!({"attachments": [{"id": "77", "filename": "replacement.png"}]}),
+        json!({"content": "must not change", "attachments": [{"id": "999", "description": "unknown"}]}),
+        json!({"attachments": [{"id": "77", "flags": 0}, {"id": "77", "flags": 8}]}),
+    ] {
+        let (status, _) = call(&app, Method::PATCH, &uri, Some(ALICE_TOKEN), Some(invalid)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (_, unchanged) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(unchanged[0]["content"], "look");
+    assert_eq!(unchanged[0]["attachments"], cleared["attachments"]);
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some("Bearer bob"),
+        Some(json!({"attachments": [{"id": "77", "flags": 0}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn requests_without_valid_credentials_are_rejected() {
     let harness = Harness::new();
     let app = app(&harness);

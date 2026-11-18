@@ -90,6 +90,7 @@ fn internal_command(
         channel_id,
         author_id,
         content: body.content.unwrap_or_default(),
+        tts: body.tts,
         attachments: body
             .attachments
             .unwrap_or_default()

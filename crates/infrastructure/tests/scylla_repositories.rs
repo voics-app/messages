@@ -68,6 +68,7 @@ async fn scylla_adapters_against_a_real_node() {
 async fn message_crud(repo: &ScyllaMessageRepository) {
     let channel = id_at(1, 0);
     let mut original = message(channel, id_at(BUCKET_SIZE_MS * 2, 1), "hello <@7>");
+    original.tts = true;
     original.attachments.push(Attachment {
         id: Snowflake::new(900),
         filename: AttachmentFilename::parse("cat.png").unwrap(),
@@ -84,6 +85,8 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
 
     let mut edited = original.clone();
     edited.content = "edited".into();
+    edited.attachments[0].description = Some("a sleeping cat".into());
+    edited.attachments[0].flags = 0;
     edited.edited_at_ms = Some(DISCORDY_EPOCH_MS + 5);
     repo.update(&edited).await.unwrap();
     repo.set_pinned(channel, original.id, true).await.unwrap();
@@ -93,7 +96,9 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     assert_eq!(stored.flags, 4, "SUPPRESS_EMBEDS persists through update");
     assert_eq!(stored.content, "edited");
     assert!(stored.pinned);
-    assert_eq!(stored.attachments, original.attachments);
+    assert!(stored.tts, "TTS survives both insert and later message edits");
+    assert_eq!(stored.attachments, edited.attachments);
+    assert_eq!(stored.attachments[0].key(channel), original.attachments[0].key(channel));
 
     let forwarded = Message::compose(
         id_at(BUCKET_SIZE_MS * 2, 5),
