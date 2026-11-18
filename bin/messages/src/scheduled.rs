@@ -10,7 +10,6 @@ use discordy_messages_application::{
     scheduled::{ScheduledMessages, ScheduledPorts, ScheduledWorker},
     use_cases::{CreateMessage, MessagingPorts},
 };
-use discordy_messages_domain::scheduled::DispatchOutcome;
 use discordy_messages_infrastructure::{
     scylla::{ScyllaMessageRepository, ScyllaScheduledMessages, Session},
     system::RandomScheduleAttempts,
@@ -91,6 +90,7 @@ async fn run(mut worker: ScheduledWorker, mut shutdown: watch::Receiver<bool>) {
     let mut ticks = tokio::time::interval(Duration::from_secs(1));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut due_ages = [0_u64; 64];
+    let mut claim_ages = [[0_u64; 2]; 64];
     let mut passes = [Instant::now(); 64];
     loop {
         let busy = worker.in_flight() > 0;
@@ -98,17 +98,14 @@ async fn run(mut worker: ScheduledWorker, mut shutdown: watch::Receiver<bool>) {
             biased;
             changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } }
             outcome = worker.next_completion(), if busy => {
-                match outcome {
-                    Some(Ok(Some(DispatchOutcome::Unknown))) => { metrics::counter!("scheduled_delivery_unknown_total").increment(1); }
-                    Some(Ok(Some(DispatchOutcome::Sent))) => { metrics::counter!("scheduled_sent_total").increment(1); }
-                    Some(Ok(Some(DispatchOutcome::Failed(_)))) => { metrics::counter!("scheduled_failed_total").increment(1); }
-                    Some(Err(error)) => { tracing::warn!(%error, "scheduled dispatch could not finish"); metrics::counter!("scheduled_dispatch_errors_total").increment(1); }
-                    _ => {}
+                if let Some(Err(error)) = outcome {
+                    tracing::warn!(%error, "scheduled dispatch could not finish");
+                    metrics::counter!("scheduled_dispatch_errors_total").increment(1);
                 }
             }
             _ = ticks.tick() => {
                 match tokio::time::timeout(Duration::from_secs(5), worker.scan()).await {
-                    Ok(Ok(report)) => observe(report, &mut due_ages, &mut passes),
+                    Ok(Ok(report)) => observe(report, &mut due_ages, &mut claim_ages, &mut passes),
                     Ok(Err(error)) => { tracing::warn!(%error, "scheduled discovery failed; cursors will be revisited"); metrics::counter!("scheduled_scan_errors_total").increment(1); }
                     Err(_) => { tracing::warn!("scheduled discovery timed out; cursors will be revisited"); metrics::counter!("scheduled_scan_errors_total").increment(1); }
                 }
@@ -129,10 +126,21 @@ async fn run(mut worker: ScheduledWorker, mut shutdown: watch::Receiver<bool>) {
 fn observe(
     report: discordy_messages_application::scheduled::ScheduleScan,
     due_ages: &mut [u64; 64],
+    claim_ages: &mut [[u64; 2]; 64],
     passes: &mut [Instant; 64],
 ) {
     for (shard, age) in report.shard_due_ages {
         due_ages[usize::from(shard)] = age;
+    }
+    for (shard, ages) in report.shard_claim_ages {
+        claim_ages[usize::from(shard)] = ages;
+    }
+    for (index, status) in ["preparing", "dispatching"].into_iter().enumerate() {
+        metrics::gauge!("scheduled_observed_oldest_claim_seconds", "status" => status)
+            .set(claim_ages.iter().map(|ages| ages[index]).max().unwrap_or(0) as f64 / 1000.0);
+    }
+    if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        metrics::gauge!("scheduled_last_successful_scan_unixtime_seconds").set(now.as_secs_f64());
     }
     metrics::gauge!("scheduled_observed_oldest_due_seconds")
         .set(due_ages.iter().copied().max().unwrap_or(0) as f64 / 1000.0);

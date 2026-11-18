@@ -13,6 +13,8 @@ pub struct ScheduleScan {
     pub recovered: usize,
     pub oldest_due_age_ms: u64,
     pub shard_due_ages: Vec<(u8, u64)>,
+    /// Oldest observed preparing/dispatching age on this shard page, before recovery.
+    pub shard_claim_ages: Vec<(u8, [u64; 2])>,
     /// Observed candidates, not a whole-database census: preparing/pending/dispatching/sent/failed/cancelled/unknown.
     pub states: [u64; 7],
     pub wrapped_shards: Vec<u8>,
@@ -86,6 +88,7 @@ impl ScheduledWorker {
         let mut last = cursor;
         let previous_oldest = report.oldest_due_age_ms;
         report.oldest_due_age_ms = 0;
+        report.shard_claim_ages.push((shard, [0; 2]));
         let mut blocked = false;
         for candidate in page {
             report.examined += 1;
@@ -114,8 +117,10 @@ impl ScheduledWorker {
             return Ok(true);
         };
         let now = self.ports.clock.now_unix_ms();
-        report.states[state_index(job.status)] += 1;
         if matches!(job.status, ScheduledStatus::Preparing | ScheduledStatus::Dispatching) {
+            let age_index = usize::from(job.status == ScheduledStatus::Dispatching);
+            let ages = &mut report.shard_claim_ages.last_mut().expect("scan page initialized").1;
+            ages[age_index] = ages[age_index].max(now.saturating_sub(job.updated_at_ms));
             let previous = job.status;
             job = self
                 .ports
@@ -124,6 +129,7 @@ impl ScheduledWorker {
                 .await?;
             report.recovered += usize::from(job.status != previous);
         }
+        report.states[state_index(job.status)] += 1;
         match job.status {
             ScheduledStatus::Preparing | ScheduledStatus::Dispatching => {}
             ScheduledStatus::Pending => {

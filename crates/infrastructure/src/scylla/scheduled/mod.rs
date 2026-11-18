@@ -1,6 +1,9 @@
 //! One author-partition CAS commits the job, bounded active discovery and both quotas.
 mod index;
 mod journal;
+mod observability;
+#[cfg(test)]
+mod observability_test;
 mod rows;
 mod schema;
 mod statements;

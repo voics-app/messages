@@ -107,7 +107,7 @@ impl ScheduledMessages {
         }
     }
 
-    async fn reconcile_author(&self, author: discordy_messages_domain::UserId) -> AppResult<()> {
+    pub(super) async fn reconcile_author(&self, author: discordy_messages_domain::UserId) -> AppResult<()> {
         let active = self.ports.journal.active(author).await?;
         if active.len() > AUTHOR_SCHEDULE_LIMIT as usize {
             return Err(PortError::new("active schedule discovery exceeds quota").into());

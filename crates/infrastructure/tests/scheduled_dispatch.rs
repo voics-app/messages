@@ -3,6 +3,8 @@
 mod faults;
 #[path = "scheduled_dispatch/fixture.rs"]
 mod fixture;
+#[path = "scheduled_dispatch/load.rs"]
+mod load;
 mod support;
 
 use std::sync::{Arc, atomic::Ordering};
@@ -135,5 +137,26 @@ async fn aborted_preparation_fences_a_creator_paused_after_indexing_before_activ
     assert_eq!(result.job.status, ScheduledStatus::Failed);
     assert!(result.job.draft.is_none());
     assert!(f.second.journal.active(command.author_id).await.unwrap().is_empty());
+    assert_eq!(f.messages.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn author_inspection_recovers_a_real_reservation_that_never_reached_the_due_index() {
+    let mut f = Fixture::new("scheduled_unindexed").await;
+    f.first.index = Arc::new(faults::UnavailableIndex(f.first.index.clone()));
+    let service = ScheduledMessages::new(f.first.clone());
+    let command = f.command(1);
+    assert!(service.create(command.clone()).await.is_err());
+    assert_eq!(f.second.journal.active(command.author_id).await.unwrap().len(), 1);
+    f.harness.clock.advance_ms(PREPARATION_TIMEOUT_MS);
+    f.harness.access.set_permissions(0);
+    let reopened = ScheduledMessages::new(f.second.clone());
+    let failed = reopened.get(address(&command)).await.unwrap();
+    assert_eq!(failed.status, ScheduledStatus::Failed);
+    assert!(failed.draft.is_none());
+    assert!(f.second.journal.active(command.author_id).await.unwrap().is_empty());
+    let replay = reopened.create(command).await.unwrap();
+    assert!(!replay.created);
+    assert_eq!(replay.job.status, ScheduledStatus::Failed);
     assert_eq!(f.messages.calls.load(Ordering::SeqCst), 0);
 }

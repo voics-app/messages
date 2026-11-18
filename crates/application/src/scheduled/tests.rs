@@ -12,6 +12,9 @@ use discordy_messages_domain::scheduled::{
 use discordy_messages_domain::{DomainError, Snowflake};
 use std::sync::{Arc, atomic::Ordering};
 
+#[path = "policy_tests.rs"]
+mod policy_tests;
+
 struct Fixture {
     harness: Harness,
     memory: Arc<MemorySchedules>,

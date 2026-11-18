@@ -156,6 +156,33 @@ async fn worker_bounds_active_dispatches_and_does_not_duplicate_queued_keys() {
 }
 
 #[tokio::test]
+async fn recovery_observations_include_unknown_and_the_age_of_the_abandoned_claim() {
+    let f = Fixture::new();
+    let pending = f.seed(1, ScheduledStatus::Pending).await;
+    f.harness.clock.advance_ms(MIN_SCHEDULE_DELAY_MS);
+    f.memory
+        .change(
+            (&pending).into(),
+            ScheduleChange::Claim {
+                expected_revision: 1,
+                attempt_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
+                message_id: Snowflake::new(1000),
+            },
+            START_MS + MIN_SCHEDULE_DELAY_MS,
+        )
+        .await
+        .unwrap();
+    f.harness.clock.advance_ms(PREPARATION_TIMEOUT_MS + 1000);
+    let report = ScheduledWorker::new(f.ports).scan().await.unwrap();
+    assert_eq!(report.recovered, 1);
+    assert_eq!(
+        report.states[6], 1,
+        "a newly recovered unknown must be visible to alerts"
+    );
+    assert_eq!(report.shard_claim_ages[0], (0, [0, PREPARATION_TIMEOUT_MS + 1000]));
+}
+
+#[tokio::test]
 async fn restart_continues_beyond_a_page_and_wrap_revisits_a_new_earlier_entry() {
     let f = Fixture::new();
     for sequence in 1..=225 {

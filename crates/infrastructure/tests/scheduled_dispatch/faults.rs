@@ -50,6 +50,27 @@ impl MessageRepository for ObservedMessages {
     }
 }
 
+pub struct UnavailableIndex(pub Arc<dyn ScheduleIndex>);
+
+#[async_trait]
+impl ScheduleIndex for UnavailableIndex {
+    async fn stage(&self, _due: DueSchedule) -> Result<(), PortError> {
+        Err(PortError::new("fixture stopped before the first index write"))
+    }
+    async fn remove(&self, due: DueSchedule) -> Result<(), PortError> {
+        self.0.remove(due).await
+    }
+    async fn page(&self, shard: u8, after: Option<DueSchedule>, now: u64) -> Result<Vec<DueSchedule>, PortError> {
+        self.0.page(shard, after, now).await
+    }
+    async fn cursor(&self, shard: u8) -> Result<Option<DueSchedule>, PortError> {
+        self.0.cursor(shard).await
+    }
+    async fn save_cursor(&self, shard: u8, after: Option<DueSchedule>) -> Result<(), PortError> {
+        self.0.save_cursor(shard, after).await
+    }
+}
+
 pub struct PausedJournal {
     pub inner: Arc<dyn ScheduleJournal>,
     pub before_claim: bool,

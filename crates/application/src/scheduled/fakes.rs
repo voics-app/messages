@@ -25,6 +25,7 @@ pub struct MemorySchedules {
     pub cursors: Mutex<BTreeMap<u8, DueSchedule>>,
     pub fail_next_stage: AtomicBool,
     pub claim_gate: Mutex<Option<Arc<ClaimGate>>>,
+    pub after_claim_gate: Mutex<Option<Arc<ClaimGate>>>,
     pub fail_after_claim: AtomicBool,
 }
 
@@ -81,6 +82,15 @@ impl ScheduleJournal for MemorySchedules {
             job.transition(change, now)?;
             job.clone()
         };
+        let after = if claim {
+            self.after_claim_gate.lock().unwrap().take()
+        } else {
+            None
+        };
+        if let Some(gate) = after {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
         if claim && self.fail_after_claim.swap(false, Ordering::SeqCst) {
             return Err(PortError::new("fixture lost claim response").into());
         }

@@ -59,6 +59,7 @@ impl ScheduleJournal for ScyllaScheduledMessages {
         for attempt in 0..MAX_CAS_ATTEMPTS {
             let metadata = self.ensure_metadata(key.author_id).await?;
             let mut job = self.find(key).await?.ok_or(DomainError::UnknownSchedule)?;
+            let previous = (job.status, job.updated_at_ms);
             let occupied = job.occupies_quota();
             if !job.transition(change.clone(), now)? {
                 return Ok(job);
@@ -72,6 +73,7 @@ impl ScheduleJournal for ScyllaScheduledMessages {
                 .commit(&metadata, count - released, &job, metadata.active - released)
                 .await?
             {
+                super::observability::committed(previous, &job, now);
                 return Ok(job);
             }
             conflict_backoff(attempt).await;

@@ -32,6 +32,7 @@ impl ScheduledMessages {
 
     pub async fn cancel(&self, address: ScheduleAddress, expected_revision: u32) -> AppResult<ScheduledMessage> {
         self.rate_limit(address.key.author_id)?;
+        self.reconcile_author(address.key.author_id).await?;
         self.owned(address).await?;
         self.ports
             .journal
