@@ -14,6 +14,10 @@ pub struct FieldError {
 pub enum DomainError {
     #[error("invalid form body")]
     InvalidForm(Vec<FieldError>),
+    #[error("scheduled message conflict")]
+    ScheduleConflict(Vec<FieldError>),
+    #[error("unknown scheduled message")]
+    UnknownSchedule,
     #[error("missing access")]
     MissingAccess,
     #[error("missing permissions")]

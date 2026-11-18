@@ -1,7 +1,7 @@
 //! System clock and issuance from committed, bounded API reservations.
 use crate::api::InternalApi;
 use discordy_messages_application::PortError;
-use discordy_messages_application::ports::{Clock, IdGenerator};
+use discordy_messages_application::ports::{Clock, IdGenerator, scheduled::ScheduleAttempts};
 use discordy_messages_domain::{Snowflake, WorkerId};
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,6 +11,13 @@ pub struct SystemClock;
 impl Clock for SystemClock {
     fn now_unix_ms(&self) -> u64 {
         voics_snowflake::unix_ms()
+    }
+}
+
+pub struct RandomScheduleAttempts;
+impl ScheduleAttempts for RandomScheduleAttempts {
+    fn next_attempt(&self) -> Result<discordy_messages_domain::scheduled::ScheduleId, PortError> {
+        uuid::Uuid::new_v4().to_string().parse().map_err(PortError::new)
     }
 }
 

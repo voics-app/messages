@@ -18,6 +18,7 @@ pub mod paging;
 pub mod permissions;
 pub mod reaction;
 pub mod read_state;
+pub mod scheduled;
 pub mod search;
 pub mod snowflake;
 

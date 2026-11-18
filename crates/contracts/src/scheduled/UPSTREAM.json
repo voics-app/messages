@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/discordy-voics/contracts",
+  "revision": "8d1fdba403ff83d509335ff769fb9a4019853efa",
+  "source": "dist/schemas.bundle.json",
+  "roots": [
+    "CreateScheduledMessageRequest",
+    "EditScheduledMessageRequest",
+    "ScheduledMessageList"
+  ],
+  "sha256_lf": {
+    "schema.json": "46a4fef3b8d243fd39a12b3389c37443d18fd6408d23a9c8c2826d99dcdbaddb",
+    "types.rs": "554b2e83c3dd4a5d45d702c34bd74ed6ee6c9733119faf1cc241190431b5d016"
+  }
+}
