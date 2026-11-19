@@ -76,6 +76,10 @@ pub fn router(state: AppState) -> Router {
             "/channels/{channel_id}/messages/{message_id}/call",
             patch(internal::update_call),
         )
+        .route(
+            "/channels/{channel_id}/messages/{message_id}/crossposted",
+            post(internal::mark_crossposted),
+        )
         .route("/channels/{channel_id}/last-message-id", get(internal::last_message_id))
         .route("/users/{user_id}/read-states", get(internal::read_states))
         .route("/admin/stats", get(internal::admin_stats))

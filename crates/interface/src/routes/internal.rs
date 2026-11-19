@@ -30,6 +30,15 @@ pub async fn create_message(
     Ok(Json(single(&state, &view).await))
 }
 
+pub async fn mark_crossposted(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath((Id(channel), Id(message))): ApiPath<(Id, Id)>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let view = state.use_cases.mark_crossposted.execute(channel, message).await?;
+    Ok(Json(single(&state, &view).await))
+}
+
 fn internal_command(
     channel_id: discordy_messages_domain::ChannelId,
     body: InternalCreateMessageRequest,

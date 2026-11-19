@@ -645,6 +645,22 @@ async fn internal_webhook_posts_are_authored_by_the_webhook_with_overrides() {
 }
 
 #[tokio::test]
+async fn publication_marker_requires_internal_authentication() {
+    let harness = Harness::new();
+    let mut access = guild_access(MEMBER);
+    access.channel_type = 5;
+    *harness.access.channel.lock().unwrap() = Ok(access);
+    let original = harness.seed(ALICE, "news").await;
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages/{}/crossposted", original.id);
+    let (status, _) = post_internal(&app, &uri, None, json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, marked) = post_internal(&app, &uri, Some(INTERNAL), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(marked["flags"].as_u64().unwrap() & 1, 1);
+}
+
+#[tokio::test]
 async fn internal_interaction_responses_link_their_interaction() {
     let harness = Harness::new();
     harness.access.set_permissions(Permissions::VIEW_CHANNEL);
