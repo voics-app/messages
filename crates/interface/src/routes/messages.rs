@@ -4,6 +4,7 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::StatusCode;
+use base64::Engine;
 use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, ForwardSource};
 use discordy_messages_domain::attachment::AttachmentMetadataEdit;
@@ -93,9 +94,7 @@ pub(crate) fn attachment_reference(a: contracts::AttachmentReferenceDto) -> Resu
     if let Some(waveform) = &a.waveform
         && (waveform.is_empty()
             || waveform.len() > 1024
-            || !waveform
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='))
+            || base64::engine::general_purpose::STANDARD.decode(waveform).is_err())
     {
         return Err(ApiError::invalid("waveform", "must be bounded base64 samples"));
     }
