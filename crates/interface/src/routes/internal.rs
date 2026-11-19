@@ -59,7 +59,10 @@ pub async fn forum_summaries(
         let channel_id = parse_id("channel_ids", &raw)?;
         let (count, first, latest) = state.use_cases.history.forum_summary(channel_id).await?;
         let first = match first {
-            Some(message) => Some(single(&state, &MessageView::without_reactions(message)).await),
+            Some(message) => {
+                let dto = single(&state, &MessageView::without_reactions(message)).await;
+                Some(json!({"id": dto.id, "content": dto.content, "attachments": dto.attachments}))
+            }
             None => None,
         };
         summaries.push(json!({"channel_id": raw, "message_count": count, "first_message": first, "last_message_id": latest.map(|id| id.to_string())}));
