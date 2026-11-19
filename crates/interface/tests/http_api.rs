@@ -661,6 +661,23 @@ async fn publication_marker_requires_internal_authentication() {
 }
 
 #[tokio::test]
+async fn trusted_crosspost_delivers_snapshot_with_reserved_identity() {
+    let harness = Harness::new();
+    *harness.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/crossposts");
+    let payload = json!({"source_channel_id":"900", "message_id":"901", "webhook_id":"902", "webhook_name":"News", "snapshot":{"content":"hello @everyone", "embeds":[], "attachments":[]}});
+    let (status, _) = post_internal(&app, &uri, None, payload.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, delivered) = post_internal(&app, &uri, Some(INTERNAL), payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(delivered["id"], "901");
+    assert_eq!(delivered["webhook_id"], "902");
+    assert_eq!(delivered["flags"].as_u64().unwrap() & 2, 2);
+    assert_eq!(delivered["mention_everyone"], false);
+}
+
+#[tokio::test]
 async fn internal_interaction_responses_link_their_interaction() {
     let harness = Harness::new();
     harness.access.set_permissions(Permissions::VIEW_CHANNEL);
