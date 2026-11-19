@@ -90,15 +90,14 @@ pub(crate) fn attachment_reference(a: contracts::AttachmentReferenceDto) -> Resu
             Ok((seconds * 1000.0).round().max(1.0) as u32)
         })
         .transpose()?;
-    if let Some(waveform) = &a.waveform {
-        if waveform.is_empty()
+    if let Some(waveform) = &a.waveform
+        && (waveform.is_empty()
             || waveform.len() > 1024
             || !waveform
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
-        {
-            return Err(ApiError::invalid("waveform", "must be bounded base64 samples"));
-        }
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='))
+    {
+        return Err(ApiError::invalid("waveform", "must be bounded base64 samples"));
     }
     Ok(AttachmentReference {
         uploaded_filename: a.uploaded_filename,
