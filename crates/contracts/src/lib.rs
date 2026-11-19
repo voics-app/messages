@@ -522,6 +522,11 @@ pub struct InternalForumStartRequest {
     pub content: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumSummaryRequest {
+    pub channel_ids: Vec<String>,
+}
+
 /// api: `POST /internal/v1/auth/introspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntrospectRequest {

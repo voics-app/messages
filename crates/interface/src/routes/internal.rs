@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use contracts::{
-    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalForumStartRequest, LastMessageIdResponse,
-    MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
+    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalForumStartRequest, InternalForumSummaryRequest,
+    LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
@@ -44,6 +44,27 @@ pub async fn create_forum_start(
         .execute_forum_start(channel_id, author_id, message_id, body.content)
         .await?;
     Ok(Json(single(&state, &view).await))
+}
+
+pub async fn forum_summaries(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiJson(body): ApiJson<InternalForumSummaryRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if body.channel_ids.len() > 50 {
+        return Err(ApiError::invalid("channel_ids", "at most 50 channels"));
+    }
+    let mut summaries = Vec::with_capacity(body.channel_ids.len());
+    for raw in body.channel_ids {
+        let channel_id = parse_id("channel_ids", &raw)?;
+        let (count, first, latest) = state.use_cases.history.forum_summary(channel_id).await?;
+        let first = match first {
+            Some(message) => Some(single(&state, &MessageView::without_reactions(message)).await),
+            None => None,
+        };
+        summaries.push(json!({"channel_id": raw, "message_count": count, "first_message": first, "last_message_id": latest.map(|id| id.to_string())}));
+    }
+    Ok(Json(json!({"summaries": summaries})))
 }
 
 fn internal_command(

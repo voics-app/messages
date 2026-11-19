@@ -22,6 +22,7 @@ pub struct ScyllaMessageRepository {
     scan_older: PreparedStatement,
     scan_older_unbounded: PreparedStatement,
     scan_newer: PreparedStatement,
+    count_bucket: PreparedStatement,
     last: PreparedStatement,
     all_channels: PreparedStatement,
 }
@@ -78,6 +79,7 @@ impl ScyllaMessageRepository {
                 &format!("{select} AND message_id > ? ORDER BY message_id ASC LIMIT ?"),
             )
             .await?,
+            count_bucket: prepare(s, "SELECT count(*) FROM messages WHERE channel_id = ? AND bucket = ?").await?,
             last: prepare(
                 s,
                 "SELECT last_message_id FROM channel_last_message WHERE channel_id = ?",
@@ -176,6 +178,11 @@ impl MessageRepository for ScyllaMessageRepository {
             }
         };
         Ok(rows.into_iter().filter_map(MessageRow::into_message).collect())
+    }
+
+    async fn count_bucket(&self, channel_id: ChannelId, bucket: Bucket) -> Result<u64, PortError> {
+        let rows: Vec<(i64,)> = fetch_all(&self.session, &self.count_bucket, (id(channel_id), bucket.value())).await?;
+        Ok(rows.first().map(|row| row.0.max(0) as u64).unwrap_or(0))
     }
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {

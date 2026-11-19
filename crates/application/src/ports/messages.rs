@@ -33,6 +33,32 @@ pub trait MessageRepository: Send + Sync {
     /// `Newer`.
     async fn scan_bucket(&self, query: BucketQuery) -> Result<Vec<Message>, PortError>;
 
+    /// Exact count in one partition. Adapters may override the paged fallback.
+    async fn count_bucket(&self, channel_id: ChannelId, bucket: Bucket) -> Result<u64, PortError> {
+        let mut count = 0u64;
+        let mut bound = None;
+        loop {
+            let page = self
+                .scan_bucket(BucketQuery {
+                    channel_id,
+                    bucket,
+                    direction: ScanDirection::Newer,
+                    bound,
+                    limit: 100,
+                })
+                .await?;
+            if page.is_empty() {
+                break;
+            }
+            count += page.len() as u64;
+            bound = page.last().map(|m| m.id);
+            if page.len() < 100 {
+                break;
+            }
+        }
+        Ok(count)
+    }
+
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError>;
 
     /// Every channel that has ever held a message, with its newest message id
