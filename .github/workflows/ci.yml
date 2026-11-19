@@ -44,7 +44,7 @@ jobs:
 
   sticker-scylla-integration:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: vm-runner
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
