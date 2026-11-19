@@ -42,6 +42,17 @@ jobs:
     secrets:
       private-deps-token: ${{ secrets.DEPS_TOKEN }}
 
+  sticker-scylla-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Require Scylla CPU features
+        run: grep -qw sse4_2 /proc/cpuinfo && grep -qw pclmulqdq /proc/cpuinfo
+      - name: Exercise sticker persistence in Scylla
+        run: cargo test --locked -p discordy-messages-infrastructure --test scylla_repositories scylla_adapters_against_a_real_node -- --nocapture
+
   docker:
     needs: rust
     permissions:
