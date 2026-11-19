@@ -86,7 +86,9 @@ impl ChannelAccessProvider for HttpChannelAccess {
             .try_get_with((channel_id, user_id), self.fetch(channel_id, user_id))
             .await
             .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?;
-        if matches!(&answer, Ok(access) if access.channel_type == PRIVATE_THREAD) {
+        if matches!(&answer, Ok(access) if access.channel_type == PRIVATE_THREAD)
+            || matches!(&answer, Err(AccessError::NotMember))
+        {
             return self
                 .fetch(channel_id, user_id)
                 .await
