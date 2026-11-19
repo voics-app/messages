@@ -343,6 +343,12 @@ impl Message {
             } else if self.attachments[0].duration_ms.is_none() || self.attachments[0].waveform.is_none() {
                 reject("attachments", "voice messages require duration and waveform");
             }
+        } else if self
+            .attachments
+            .iter()
+            .any(|a| a.duration_ms.is_some() || a.waveform.is_some())
+        {
+            reject("attachments", "voice metadata requires the voice message flag");
         }
         if self.embeds.len() > MAX_EMBEDS {
             reject("embeds", "must be 10 or fewer");

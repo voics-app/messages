@@ -217,6 +217,15 @@ async fn voice_message_permission_validation_and_history() {
         Method::POST,
         &messages_uri(),
         Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"uploaded_filename": format!("attachments/{CHANNEL}/77/voice.ogg"), "duration_secs": 1.5, "waveform": "AQID"}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
         Some(json!({"flags":8192,"content":"invalid"})),
     )
     .await;
