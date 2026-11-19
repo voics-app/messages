@@ -23,6 +23,9 @@ pub trait MessageRepository: Send + Sync {
     /// Persist a message and its content-free guild activity marker as one write.
     async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError>;
 
+    /// Count retained activity markers for a guild and UTC day (days since Unix epoch).
+    async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError>;
+
     /// Overwrites the mutable fields of an existing message.
     async fn update(&self, message: &Message) -> Result<(), PortError>;
 

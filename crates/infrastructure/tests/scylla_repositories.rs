@@ -92,6 +92,7 @@ async fn guild_activity_markers(repo: &ScyllaMessageRepository, session: &scylla
             count, 1,
             "retry is idempotent, deletion preserves the marker and UTC days split"
         );
+        assert_eq!(repo.guild_message_count(guild, expected_day).await.unwrap(), 1);
     }
 }
 

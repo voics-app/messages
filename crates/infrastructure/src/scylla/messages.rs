@@ -16,6 +16,7 @@ pub struct ScyllaMessageRepository {
     session: Arc<Session>,
     insert: PreparedStatement,
     insert_guild: Batch,
+    count_guild_activity: PreparedStatement,
     advance_last: PreparedStatement,
     update_content: PreparedStatement,
     set_pinned: PreparedStatement,
@@ -65,6 +66,7 @@ impl ScyllaMessageRepository {
         Ok(Self {
             insert,
             insert_guild,
+            count_guild_activity: prepare(s, "SELECT count(*) FROM guild_message_activity WHERE guild_id = ? AND utc_day = ?").await?,
             advance_last: prepare(
                 s,
                 "UPDATE channel_last_message USING TIMESTAMP ? SET last_message_id = ? WHERE channel_id = ?",
@@ -111,6 +113,14 @@ impl ScyllaMessageRepository {
 
 #[async_trait]
 impl MessageRepository for ScyllaMessageRepository {
+    async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
+        let rows: Vec<(i64,)> = fetch_all(&self.session, &self.count_guild_activity, (id(guild_id), utc_day)).await?;
+        let count = rows
+            .first()
+            .ok_or_else(|| PortError::new("guild activity count returned no row"))?
+            .0;
+        u64::try_from(count).map_err(|_| PortError::new("negative guild activity count"))
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.insert_scoped(message, None).await
     }

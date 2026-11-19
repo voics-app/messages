@@ -846,6 +846,40 @@ async fn internal_endpoints_require_the_shared_token() {
 }
 
 #[tokio::test]
+async fn guild_message_activity_counts_stored_messages_but_marks_coverage_unverified() {
+    let harness = Harness::new();
+    let app = app(&harness);
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content":"hello"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let id: discordy_messages_domain::Snowflake = created["id"].as_str().unwrap().parse().unwrap();
+    let day = id.unix_millis() / 86_400_000;
+    let uri = format!(
+        "/internal/v1/guilds/{}/message-activity/{day}",
+        discordy_messages_application::fakes::GUILD
+    );
+    assert_eq!(
+        call(&app, Method::GET, &uri, None, None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let request = Request::builder()
+        .uri(&uri)
+        .header("x-internal-token", INTERNAL)
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["coverage_complete"], false);
+}
+
+#[tokio::test]
 async fn readiness_reports_failing_dependencies_without_details() {
     let harness = Harness::new();
     let failing: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(Probe(Err(PortError::new("password=hunter2"))))];

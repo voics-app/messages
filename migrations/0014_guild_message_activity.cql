@@ -5,4 +5,4 @@ CREATE TABLE IF NOT EXISTS guild_message_activity (
   utc_day bigint,
   message_id bigint,
   PRIMARY KEY ((guild_id, utc_day), message_id)
-);
+) WITH default_time_to_live = 3888000;

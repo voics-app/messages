@@ -183,6 +183,22 @@ pub async fn last_message_id(
     }))
 }
 
+/// This reports observed markers only. Mixed-version rollout and historic data
+/// have no proven coverage, so consumers must not interpret it as complete.
+pub async fn guild_message_activity(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath((Id(guild_id), day)): ApiPath<(Id, i64)>,
+) -> Result<Json<Value>, ApiError> {
+    if !(0..=100_000).contains(&day) {
+        return Err(ApiError::invalid("utc_day", "outside supported range"));
+    }
+    let count = state.use_cases.guild_message_activity.execute(guild_id, day).await?;
+    Ok(Json(
+        json!({"utc_day": day, "count": count, "coverage_complete": false}),
+    ))
+}
+
 pub async fn read_states(
     State(state): State<AppState>,
     _: InternalCaller,

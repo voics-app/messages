@@ -35,18 +35,36 @@ pub const MEMBER: u64 = Permissions::VIEW_CHANNEL
 #[derive(Default)]
 pub struct InMemoryMessages {
     rows: Mutex<BTreeMap<(ChannelId, MessageId), Message>>,
+    guild_activity: Mutex<BTreeSet<(GuildId, i64, MessageId)>>,
     last: Mutex<HashMap<ChannelId, MessageId>>,
     pub scans: AtomicUsize,
 }
 
 #[async_trait]
 impl MessageRepository for InMemoryMessages {
+    async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
+        Ok(self
+            .guild_activity
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(guild, day, _)| *guild == guild_id && *day == utc_day)
+            .count() as u64)
+    }
     async fn insert_scoped(
         &self,
         message: &Message,
-        _guild_id: Option<discordy_messages_domain::GuildId>,
+        guild_id: Option<discordy_messages_domain::GuildId>,
     ) -> Result<(), PortError> {
-        self.insert(message).await
+        self.insert(message).await?;
+        if let Some(guild_id) = guild_id {
+            self.guild_activity.lock().unwrap().insert((
+                guild_id,
+                (message.id.unix_millis() / 86_400_000) as i64,
+                message.id,
+            ));
+        }
+        Ok(())
     }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.rows

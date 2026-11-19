@@ -19,6 +19,9 @@ pub struct ObservedMessages {
 
 #[async_trait]
 impl MessageRepository for ObservedMessages {
+    async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
+        self.inner.guild_message_count(guild_id, utc_day).await
+    }
     async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.insert_scoped(message, guild_id).await?;

@@ -67,6 +67,10 @@ pub fn router(state: AppState) -> Router {
         );
 
     let internal = Router::new()
+        .route(
+            "/guilds/{guild_id}/message-activity/{utc_day}",
+            get(internal::guild_message_activity),
+        )
         .route("/channels/{channel_id}/messages", post(internal::create_message))
         .route(
             "/channels/{channel_id}/messages/{message_id}",

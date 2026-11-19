@@ -5,9 +5,9 @@ use std::sync::Arc;
 use discordy_messages_application::ports::{AttachmentStorage, Authenticator, RemoteMediaFetcher, UserDirectory};
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
-    GetLastMessageId, GetMessage, GetMessageHistory, GetMessageStats, ListPins, ListReactionUsers, ListReadStates,
-    MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction,
-    RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
+    GetGuildMessageActivity, GetLastMessageId, GetMessage, GetMessageHistory, GetMessageStats, ListPins,
+    ListReactionUsers, ListReadStates, MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch,
+    RemoveAllReactions, RemoveOwnReaction, RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
 };
 use subtle::ConstantTimeEq;
 
@@ -30,6 +30,7 @@ impl InternalToken {
 }
 
 pub struct UseCases {
+    pub guild_message_activity: GetGuildMessageActivity,
     pub create_message: CreateMessage,
     pub edit_message: EditMessage,
     pub delete_message: DeleteMessage,
@@ -58,6 +59,7 @@ pub struct UseCases {
 impl UseCases {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            guild_message_activity: GetGuildMessageActivity::new(ports),
             create_message: CreateMessage::new(ports),
             edit_message: EditMessage::new(ports),
             delete_message: DeleteMessage::new(ports),
