@@ -8,8 +8,10 @@ use std::time::Duration;
 use contracts::{Envelope, MessageDto, event_type};
 
 use super::dispatcher::{Dispatcher, Submitted};
-use super::ports::{Platform, TargetDirectory};
-use crate::domain::{IncomingMessage, OutboundPush, Verdict, compose, compose_call, decide, is_mentioned};
+use super::ports::{EventReminder, Platform, TargetDirectory};
+use crate::domain::{
+    AlertContent, IncomingMessage, OutboundPush, Verdict, compose, compose_call, decide, is_mentioned,
+};
 
 const DIRECTORY_ATTEMPTS: u32 = 3;
 const DIRECTORY_BACKOFF: Duration = Duration::from_millis(200);
@@ -81,6 +83,9 @@ impl EventHandler {
     }
 
     pub async fn handle(&self, envelope: &Envelope) {
+        if envelope.kind == "GUILD_SCHEDULED_EVENT_START" {
+            return self.handle_event_reminder(envelope).await;
+        }
         if envelope.kind != event_type::MESSAGE_CREATE {
             return;
         }
@@ -136,6 +141,62 @@ impl EventHandler {
                 }
             }
         }
+    }
+
+    async fn handle_event_reminder(&self, envelope: &Envelope) {
+        let Some(reminder) = parse_event_reminder(envelope) else {
+            return event_result("unparsable_event_reminder");
+        };
+        let Some(start_ms) = unix_ms(&reminder.scheduled_start_time) else {
+            return event_result("unparsable_event_reminder");
+        };
+        let age = (self.now_unix_ms)().saturating_sub(start_ms);
+        if !(0..=300_000).contains(&age) {
+            return event_result("stale_event_reminder");
+        }
+        let mut tokens = None;
+        for attempt in 1..=DIRECTORY_ATTEMPTS {
+            match self.directory.event_targets(&reminder).await {
+                Ok(found) => {
+                    tokens = Some(found);
+                    break;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, attempt, "event reminder directory unavailable");
+                    if attempt < DIRECTORY_ATTEMPTS {
+                        tokio::time::sleep(DIRECTORY_BACKOFF * attempt).await;
+                    }
+                }
+            }
+        }
+        let Some(tokens) = tokens else {
+            return event_result("directory_error");
+        };
+        let first_time = self
+            .seen
+            .lock()
+            .map(|mut seen| seen.insert(&reminder.dedupe_key, self.config.dedupe_capacity))
+            .unwrap_or(true);
+        if !first_time {
+            return event_result("duplicate");
+        }
+        let alert = AlertContent {
+            title: "Event starting".into(),
+            body: "An event you are interested in is starting.".into(),
+            thread_id: reminder.guild_id.clone(),
+            data: vec![
+                ("type".into(), "scheduled_event".into()),
+                ("guild_id".into(), reminder.guild_id),
+                ("event_id".into(), reminder.event_id),
+                ("dedupe_key".into(), reminder.dedupe_key),
+            ],
+        };
+        for token in tokens {
+            if self.dispatcher.submit(token, OutboundPush::Alert(alert.clone())) == Submitted::Dropped {
+                tracing::warn!("scheduled event push queue full");
+            }
+        }
+        event_result("event_reminder_processed");
     }
 
     /// Rings every device of the recipients of a DM call that has just started, with a PushKit push
@@ -197,6 +258,38 @@ impl EventHandler {
     }
 }
 
+fn parse_event_reminder(envelope: &Envelope) -> Option<EventReminder> {
+    let [user_id] = envelope.target_user_ids.as_deref()? else {
+        return None;
+    };
+    let guild_id = envelope.data.get("guild_id")?.as_str()?;
+    let event_id = envelope.data.get("guild_scheduled_event_id")?.as_str()?;
+    let start = envelope.data.get("scheduled_start_time")?.as_str()?;
+    let revision = envelope.data.get("revision")?.as_i64()?;
+    let key = envelope.data.get("dedupe_key")?.as_str()?;
+    let numeric = |id: &str| !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit());
+    if !numeric(guild_id)
+        || !numeric(event_id)
+        || !numeric(user_id)
+        || revision < 0
+        || envelope.guild_id.as_deref() != Some(guild_id)
+    {
+        return None;
+    }
+    let expected = format!("{guild_id}:{event_id}:{}:{revision}:{user_id}", unix_ms(start)?);
+    if key != expected {
+        return None;
+    }
+    Some(EventReminder {
+        guild_id: guild_id.into(),
+        event_id: event_id.into(),
+        user_id: user_id.clone(),
+        scheduled_start_time: start.into(),
+        revision,
+        dedupe_key: key.into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,6 +316,16 @@ mod tests {
         async fn targets(&self, _channel: &str, _author: &str) -> Result<ChannelTargets, PortError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.answer.lock().unwrap().clone()
+        }
+        async fn event_targets(&self, reminder: &EventReminder) -> Result<Vec<DeviceToken>, PortError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let found = self.answer.lock().unwrap().clone()?;
+            Ok(found
+                .targets
+                .into_iter()
+                .filter(|target| target.recipient.user_id == reminder.user_id)
+                .flat_map(|target| target.tokens)
+                .collect())
         }
     }
 
@@ -365,6 +468,38 @@ mod tests {
             .collect();
         tokens.sort();
         tokens
+    }
+
+    #[tokio::test]
+    async fn event_reminder_rechecks_target_and_deduplicates_the_stable_key() {
+        let rig = rig(
+            vec![Target {
+                recipient: recipient("2"),
+                tokens: vec![apns("phone", true)],
+                voip_tokens: vec![],
+            }],
+            "standard",
+        );
+        let start_ms = NOW_MS - 1000;
+        let start = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(start_ms) * 1_000_000)
+            .unwrap()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        let mut message = envelope("first", NOW_MS, json!({}));
+        message.kind = "GUILD_SCHEDULED_EVENT_START".into();
+        message.target_user_ids = Some(vec!["2".into()]);
+        message.data = json!({ "guild_id":"1", "guild_scheduled_event_id":"9", "scheduled_start_time":start, "revision":0, "dedupe_key":format!("1:9:{start_ms}:0:2") });
+        rig.handler.handle(&message).await;
+        message.id = "replayed-with-different-envelope".into();
+        rig.handler.handle(&message).await;
+        settle().await;
+        assert_eq!(sent_to(&rig), vec!["phone"]);
+        let sent = rig.sender.sent.lock().unwrap();
+        let OutboundPush::Alert(alert) = &sent[0].1 else {
+            panic!("expected alert")
+        };
+        assert_eq!(alert.title, "Event starting");
+        assert!(!alert.body.contains("Meetup"));
     }
 
     #[tokio::test]
