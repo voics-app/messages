@@ -372,7 +372,7 @@ async fn silent_flag_is_kept_and_replied_user_false_drops_the_reply_ping() {
         &messages_uri(),
         Some(ALICE_TOKEN),
         // EPHEMERAL (64) is not client-settable: only SUPPRESS_NOTIFICATIONS survives.
-        Some(json!({"content": "shh <@11>", "flags": 4096 | 64})),
+        Some(json!({"content": "shh <@11>", "flags": 4096 | 64 | 1 | 2})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
