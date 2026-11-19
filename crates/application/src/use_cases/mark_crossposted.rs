@@ -12,35 +12,6 @@ pub struct MarkCrossposted {
     events: Arc<dyn EventPublisher>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fakes::{ALICE, CHANNEL, Harness, MEMBER, guild_access};
-    use crate::ports::MessageRepository;
-    use discordy_messages_domain::{DomainError, FLAG_CROSSPOSTED};
-
-    #[tokio::test]
-    async fn only_existing_announcements_can_be_marked() {
-        let h = Harness::new();
-        let original = h.seed(ALICE, "news").await;
-        let mut access = guild_access(MEMBER);
-        access.channel_type = 5;
-        *h.access.channel.lock().unwrap() = Ok(access);
-        let use_case = MarkCrossposted::new(&h.ports);
-        let marked = use_case.execute(CHANNEL, original.id).await.unwrap();
-        assert_ne!(marked.message.flags & FLAG_CROSSPOSTED, 0);
-        assert_ne!(
-            h.messages.find(CHANNEL, original.id).await.unwrap().unwrap().flags & FLAG_CROSSPOSTED,
-            0
-        );
-        h.messages.delete(CHANNEL, &[original.id]).await.unwrap();
-        assert!(matches!(
-            use_case.execute(CHANNEL, original.id).await,
-            Err(crate::AppError::Domain(DomainError::UnknownMessage))
-        ));
-    }
-}
-
 impl MarkCrossposted {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
@@ -77,5 +48,34 @@ impl MarkCrossposted {
         )
         .await;
         Ok(MessageView::without_reactions(message))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fakes::{ALICE, CHANNEL, Harness, MEMBER, guild_access};
+    use crate::ports::MessageRepository;
+    use discordy_messages_domain::{DomainError, FLAG_CROSSPOSTED};
+
+    #[tokio::test]
+    async fn only_existing_announcements_can_be_marked() {
+        let h = Harness::new();
+        let original = h.seed(ALICE, "news").await;
+        let mut access = guild_access(MEMBER);
+        access.channel_type = 5;
+        *h.access.channel.lock().unwrap() = Ok(access);
+        let use_case = MarkCrossposted::new(&h.ports);
+        let marked = use_case.execute(CHANNEL, original.id).await.unwrap();
+        assert_ne!(marked.message.flags & FLAG_CROSSPOSTED, 0);
+        assert_ne!(
+            h.messages.find(CHANNEL, original.id).await.unwrap().unwrap().flags & FLAG_CROSSPOSTED,
+            0
+        );
+        h.messages.delete(CHANNEL, &[original.id]).await.unwrap();
+        assert!(matches!(
+            use_case.execute(CHANNEL, original.id).await,
+            Err(crate::AppError::Domain(DomainError::UnknownMessage))
+        ));
     }
 }
