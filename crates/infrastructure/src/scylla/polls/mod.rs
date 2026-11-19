@@ -404,7 +404,7 @@ mod retry_tests {
 
     #[tokio::test(start_paused = true)]
     async fn serial_read_has_an_overall_deadline() {
-        let result = retry_serial_read(|| std::future::pending::<Result<(), ()>>(), |_| true).await;
+        let result = retry_serial_read(std::future::pending::<Result<(), ()>>, |_| true).await;
         assert_eq!(result, Err(None));
     }
 }
