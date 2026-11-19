@@ -29,6 +29,10 @@ pub trait MessageRepository: Send + Sync {
 
     async fn set_pinned(&self, channel_id: ChannelId, message_id: MessageId, pinned: bool) -> Result<(), PortError>;
 
+    /// Marks an existing message as published without rewriting its mutable body.
+    /// Returns false if the message no longer exists.
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError>;
+
     /// Messages of one bucket: newest first for `Older`, oldest first for
     /// `Newer`.
     async fn scan_bucket(&self, query: BucketQuery) -> Result<Vec<Message>, PortError>;
