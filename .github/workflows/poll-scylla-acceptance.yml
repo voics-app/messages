@@ -1,0 +1,19 @@
+name: poll-scylla-acceptance
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'crates/infrastructure/src/scylla/polls/**'
+      - 'crates/infrastructure/tests/poll_persistence.rs'
+      - '.github/workflows/poll-scylla-acceptance.yml'
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Real Scylla poll concurrency and lifecycle
+        run: cargo test --locked -p discordy-messages-infrastructure --test poll_persistence -- --nocapture
