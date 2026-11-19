@@ -9,14 +9,13 @@ jobs:
   scylla:
     runs-on: vm-runner
     timeout-minutes: 45
-    env:
-      CARGO_HOME: ${{ runner.temp }}/voice-cargo-${{ github.run_id }}
-      CARGO_TARGET_DIR: ${{ runner.temp }}/voice-target-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Test real Scylla attachment roundtrip
         shell: bash
         run: |
           set -o pipefail
+          export CARGO_HOME="$RUNNER_TEMP/voice-cargo-$GITHUB_RUN_ID"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/voice-target-$GITHUB_RUN_ID"
           cargo test -p discordy-messages-infrastructure --test scylla_repositories -- --nocapture 2>&1 | tee "$RUNNER_TEMP/voice-scylla.log"
           if grep -q 'skipping: ScyllaDB' "$RUNNER_TEMP/voice-scylla.log"; then exit 1; fi
