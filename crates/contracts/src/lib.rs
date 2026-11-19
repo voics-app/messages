@@ -514,6 +514,14 @@ pub struct InternalCreateMessageRequest {
     pub thread_id: Option<String>,
 }
 
+/// Internal forum start command. API reserves the message ID and sends this at most once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumStartRequest {
+    pub author_id: String,
+    pub message_id: String,
+    pub content: String,
+}
+
 /// api: `POST /internal/v1/auth/introspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntrospectRequest {

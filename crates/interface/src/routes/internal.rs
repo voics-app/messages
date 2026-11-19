@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use contracts::{
-    AdminStatsResponse, CallDto, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode,
-    ReadStateDto, UpdateCallRequest,
+    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalForumStartRequest, LastMessageIdResponse,
+    MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
@@ -27,6 +27,22 @@ pub async fn create_message(
 ) -> Result<Json<MessageDto>, ApiError> {
     let command = internal_command(channel_id, body)?;
     let view = state.use_cases.create_message.execute_internal(command).await?;
+    Ok(Json(single(&state, &view).await))
+}
+
+pub async fn create_forum_start(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath(Id(channel_id)): ApiPath<Id>,
+    ApiJson(body): ApiJson<InternalForumStartRequest>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let author_id = parse_id("author_id", &body.author_id)?;
+    let message_id = parse_id("message_id", &body.message_id)?;
+    let view = state
+        .use_cases
+        .create_message
+        .execute_forum_start(channel_id, author_id, message_id, body.content)
+        .await?;
     Ok(Json(single(&state, &view).await))
 }
 

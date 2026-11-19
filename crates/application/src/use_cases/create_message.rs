@@ -143,6 +143,31 @@ impl CreateMessage {
         self.store(&access, command, None).await
     }
 
+    /// Creates the reserved first message of a pending forum post. The API owns
+    /// the durable claim and invokes this operation at most once per reservation.
+    pub async fn execute_forum_start(
+        &self,
+        channel_id: ChannelId,
+        author_id: discordy_messages_domain::UserId,
+        message_id: MessageId,
+        content: String,
+    ) -> AppResult<MessageView> {
+        let access = self.access.refresh(channel_id, author_id).await?;
+        access.ensure_can_send(false)?;
+        access.ensure_standard_delivery()?;
+        let command = CreateMessageCommand {
+            channel_id,
+            author_id,
+            content,
+            ..CreateMessageCommand::default()
+        };
+        let mut message = self.compose_message(&access, &command, None).await?;
+        message.id = message_id;
+        self.messages.insert(&message).await?;
+        self.publish_stored(&message, &access, None).await;
+        Ok(MessageView::without_reactions(message))
+    }
+
     /// Forwards a message: the caller needs to read the source and to send in
     /// the target. The snapshot owns copies of the source's files, so deleting
     /// the source never breaks the forward. Both ends must be standard-mode;
@@ -405,6 +430,21 @@ mod tests {
                 nonce: Some("n-1".into())
             }
         );
+    }
+
+    #[tokio::test]
+    async fn forum_start_uses_reserved_id_and_author() {
+        let h = Harness::new();
+        let id = Snowflake::new((101 << 22) + 99);
+        let view = CreateMessage::new(&h.ports)
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        assert_eq!(view.message.id, id);
+        let stored = h.messages.find(CHANNEL, id).await.unwrap().unwrap();
+        assert_eq!(stored.author_id, ALICE);
+        assert_eq!(stored.content, "opening");
+        assert_eq!(h.events.events.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
