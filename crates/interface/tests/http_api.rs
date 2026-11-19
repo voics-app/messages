@@ -579,6 +579,26 @@ async fn internal_read_state_header_certifies_an_empty_account() {
 }
 
 #[tokio::test]
+async fn internal_media_signing_requires_service_token_and_https() {
+    let app = app(&Harness::new());
+    let uri = "/internal/v1/media/sign";
+    let body = json!({"urls": ["https://example.test/cat.gif"]});
+    assert_eq!(
+        post_internal(&app, uri, None, body.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, result) = post_internal(&app, uri, Some(INTERNAL), body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(result["urls"][0].as_str().unwrap().contains("/external/"));
+    assert_eq!(
+        post_internal(&app, uri, Some(INTERNAL), json!({"urls": ["http://localhost/private"]}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn internal_create_posts_as_the_author_override_without_a_user_check() {
     let harness = Harness::new();
     harness.access.set_permissions(Permissions::VIEW_CHANNEL);

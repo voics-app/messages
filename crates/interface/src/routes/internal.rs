@@ -19,6 +19,32 @@ use crate::extract::{ApiJson, ApiPath, Id, InternalCaller, parse_id};
 use crate::routes::messages::json_texts;
 use crate::state::AppState;
 
+#[derive(serde::Deserialize)]
+pub struct SignMediaRequest {
+    urls: Vec<String>,
+}
+
+/// Internal callers may request signed media URLs; the external proxy still applies SSRF checks.
+pub async fn sign_media(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiJson(body): ApiJson<SignMediaRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if body.urls.len() > 48
+        || body.urls.iter().any(|raw| {
+            raw.len() > 2048
+                || url::Url::parse(raw).map_or(true, |u| {
+                    u.scheme() != "https" || !u.username().is_empty() || u.password().is_some()
+                })
+        })
+    {
+        return Err(ApiError::invalid("urls", "Expected up to 48 HTTPS URLs"));
+    }
+    Ok(Json(
+        json!({"urls": body.urls.iter().map(|url| state.urls.proxy_url(url)).collect::<Vec<_>>() }),
+    ))
+}
+
 pub async fn create_message(
     State(state): State<AppState>,
     _: InternalCaller,
