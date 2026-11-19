@@ -119,6 +119,14 @@ impl CreateMessage {
             return Err(DomainError::invalid("channel_id", "must be a guild text channel").into());
         }
         access.ensure_standard_delivery()?;
+        if let Some(existing) = self.messages.find(command.target_channel, command.message_id).await? {
+            if existing.webhook.as_ref().map(|webhook| webhook.webhook_id) == Some(command.webhook_id)
+                && existing.flags & discordy_messages_domain::FLAG_IS_CROSSPOST != 0
+            {
+                return Ok(MessageView::without_reactions(existing));
+            }
+            return Err(DomainError::invalid("message_id", "reserved identity is already in use").into());
+        }
         for attachment in &command.attachments {
             if !self
                 .storage
