@@ -110,6 +110,7 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
                 message_id: id_at(10, 1),
                 guild_id: Some(Snowflake::new(500)),
                 snapshot: MessageSnapshot {
+                    sticker_items: vec![],
                     content: "forwarded <@7>".into(),
                     attachments: original.attachments.clone(),
                     embeds: vec![r#"{"title":"t"}"#.into()],

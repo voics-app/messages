@@ -12,6 +12,7 @@ use crate::{ChannelId, GuildId, MessageId};
 pub struct MessageSnapshot {
     pub content: String,
     pub attachments: Vec<Attachment>,
+    pub sticker_items: Vec<crate::StickerItem>,
     pub embeds: Vec<String>,
     pub mentions: Mentions,
     pub flags: u32,
@@ -35,6 +36,7 @@ impl MessageSnapshot {
         Self {
             content: source.content.clone(),
             attachments,
+            sticker_items: source.sticker_items.clone(),
             embeds: source.embeds.clone(),
             mentions: Mentions {
                 users: source.mentions.users.clone(),

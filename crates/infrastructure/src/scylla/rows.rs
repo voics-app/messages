@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use discordy_messages_domain::{
     Attachment, AttachmentFilename, Bucket, Call, ForwardOrigin, InteractionLink, Mentions, Message, MessageKind,
-    MessageSnapshot, ReadState, Snowflake, WebhookAuthor,
+    MessageSnapshot, ReadState, Snowflake, StickerItem, WebhookAuthor,
 };
 use scylla::value::CqlTimestamp;
 use scylla::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
@@ -65,16 +65,17 @@ pub(crate) struct MessageRow {
     call_participants: Option<Vec<i64>>,
     call_ended_at: Option<CqlTimestamp>,
     thread_id: Option<i64>,
+    sticker_items: Option<String>,
 }
 
 /// The column list matching [`MessageRow`], for SELECT and INSERT.
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts, sticker_items";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 30;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 31;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -116,6 +117,7 @@ impl MessageRow {
                 .and_then(|c| c.ended_at_ms)
                 .map(|ms| CqlTimestamp(ms as i64)),
             thread_id: message.thread_id.map(id),
+            sticker_items: Some(stickers_json(&message.sticker_items)),
         }
     }
 
@@ -146,6 +148,7 @@ impl MessageRow {
                 .into_iter()
                 .filter_map(attachment_from_udt)
                 .collect(),
+            sticker_items: stickers_from_json(self.sticker_items.as_deref().unwrap_or("[]")),
             embeds: split_json_array(self.embeds.as_deref()),
             components: split_json_array(self.components.as_deref()),
             mentions: Mentions {
@@ -233,11 +236,48 @@ fn attachment_from_udt(udt: AttachmentUdt) -> Option<Attachment> {
     })
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StickerItemJson {
+    id: u64,
+    name: String,
+    format_type: u8,
+}
+impl From<&StickerItem> for StickerItemJson {
+    fn from(item: &StickerItem) -> Self {
+        Self {
+            id: item.id.value(),
+            name: item.name.clone(),
+            format_type: item.format_type,
+        }
+    }
+}
+impl From<StickerItemJson> for StickerItem {
+    fn from(item: StickerItemJson) -> Self {
+        Self {
+            id: Snowflake::new(item.id),
+            name: item.name,
+            format_type: item.format_type,
+        }
+    }
+}
+fn stickers_json(items: &[StickerItem]) -> String {
+    serde_json::to_string(&items.iter().map(StickerItemJson::from).collect::<Vec<_>>()).unwrap_or_default()
+}
+fn stickers_from_json(raw: &str) -> Vec<StickerItem> {
+    serde_json::from_str::<Vec<StickerItemJson>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(StickerItem::from)
+        .collect()
+}
+
 /// The snapshot is stored as one JSON document: it is only ever read and
 /// written together with its message.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SnapshotJson {
     content: String,
+    #[serde(default)]
+    sticker_items: Vec<StickerItemJson>,
     attachments: Vec<AttachmentJson>,
     embeds: Vec<String>,
     users: Vec<u64>,
@@ -262,6 +302,7 @@ struct AttachmentJson {
 fn snapshot_json(snapshot: &MessageSnapshot) -> String {
     let document = SnapshotJson {
         content: snapshot.content.clone(),
+        sticker_items: snapshot.sticker_items.iter().map(StickerItemJson::from).collect(),
         attachments: snapshot
             .attachments
             .iter()
@@ -290,6 +331,7 @@ fn snapshot_from_json(raw: &str) -> Option<MessageSnapshot> {
     let document: SnapshotJson = serde_json::from_str(raw).ok()?;
     Some(MessageSnapshot {
         content: document.content,
+        sticker_items: document.sticker_items.into_iter().map(StickerItem::from).collect(),
         attachments: document
             .attachments
             .into_iter()
@@ -340,6 +382,34 @@ fn split_json_array(raw: Option<&str>) -> Vec<String> {
 mod tests {
     use super::*;
     use discordy_messages_domain::MessageDraft;
+
+    #[test]
+    fn sticker_only_message_round_trips() {
+        let item = StickerItem {
+            id: Snowflake::new(7),
+            name: "wave".into(),
+            format_type: 1,
+        };
+        let draft = MessageDraft {
+            sticker_items: vec![item.clone()],
+            ..MessageDraft::default()
+        };
+        let message = Message::compose(
+            Snowflake::new(1 << 40),
+            Snowflake::new(5),
+            Snowflake::new(6),
+            draft,
+            false,
+        )
+        .unwrap();
+        let stored = MessageRow::from_message(&message).into_message().unwrap();
+        assert_eq!(stored.sticker_items, vec![item]);
+        let snapshot = MessageSnapshot::of(&stored, vec![]);
+        assert_eq!(
+            snapshot_from_json(&snapshot_json(&snapshot)).unwrap().sticker_items,
+            stored.sticker_items
+        );
+    }
 
     #[test]
     fn messages_round_trip_through_rows() {
@@ -426,6 +496,7 @@ mod tests {
     #[test]
     fn forwarded_messages_round_trip_through_rows() {
         let snapshot = MessageSnapshot {
+            sticker_items: vec![],
             content: "original <@7>".into(),
             attachments: vec![Attachment {
                 id: Snowflake::new(31),

@@ -2,7 +2,7 @@
 
 use contracts::{
     AttachmentDto, AuthorOverrideDto, CallDto, EmojiDto, InteractionMetadataDto, MessageDto, MessageReferenceDto,
-    MessageSnapshotDto, ReactionDto, ReadStateDto, SnapshotMessageDto, UserRef,
+    MessageSnapshotDto, ReactionDto, ReadStateDto, SnapshotMessageDto, StickerItemDto, UserRef,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_domain::{
@@ -43,6 +43,17 @@ pub fn emoji_dto(emoji: &Emoji) -> EmojiDto {
             name: name.clone(),
         },
     }
+}
+
+fn sticker_items(items: &[discordy_messages_domain::StickerItem]) -> Vec<StickerItemDto> {
+    items
+        .iter()
+        .map(|item| StickerItemDto {
+            id: item.id.to_string(),
+            name: item.name.clone(),
+            format_type: item.format_type,
+        })
+        .collect()
 }
 
 fn reaction_dto(reaction: &ReactionCount) -> ReactionDto {
@@ -134,6 +145,7 @@ fn snapshot_dto(channel_id: ChannelId, snapshot: &MessageSnapshot, urls: &Attach
                 .iter()
                 .map(|a| attachment_dto(channel_id, a, urls))
                 .collect(),
+            sticker_items: sticker_items(&snapshot.sticker_items),
             embeds: embed_values(&snapshot.embeds, urls),
             kind: 0,
             flags: snapshot.flags,
@@ -172,6 +184,7 @@ pub fn message_dto(
             .iter()
             .map(|a| attachment_dto(message.channel_id, a, urls))
             .collect(),
+        sticker_items: sticker_items(&message.sticker_items),
         embeds: embed_values(&message.embeds, urls),
         reactions: reactions.iter().map(reaction_dto).collect(),
         nonce,
