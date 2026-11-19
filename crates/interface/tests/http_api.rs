@@ -54,8 +54,8 @@ impl ReadinessCheck for Probe {
     }
 }
 
-fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
-    router(AppState::new(
+fn state_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> AppState {
+    AppState::new(
         &harness.ports,
         Arc::new(FakeAuth),
         InternalToken::new(INTERNAL),
@@ -68,7 +68,11 @@ fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
         harness.media.clone(),
         probes,
         test_metrics(),
-    ))
+    )
+}
+
+fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
+    router(state_with(harness, probes))
 }
 
 /// Per-test recorder, installed as this thread's default (tests run on current-thread runtimes).
@@ -580,13 +584,19 @@ async fn internal_read_state_header_certifies_an_empty_account() {
 
 #[tokio::test]
 async fn internal_media_signing_requires_service_token_and_https() {
-    let app = app(&Harness::new());
+    let harness = Harness::new();
+    let closed = app(&harness);
     let uri = "/internal/v1/media/sign";
     let body = json!({"urls": ["https://example.test/cat.gif"]});
     assert_eq!(
-        post_internal(&app, uri, None, body.clone()).await.0,
+        post_internal(&closed, uri, None, body.clone()).await.0,
         StatusCode::UNAUTHORIZED
     );
+    assert_eq!(
+        post_internal(&closed, uri, Some(INTERNAL), body.clone()).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let app = router(state_with(&harness, vec![]).with_gif_media_hosts(vec!["example.test".into()]));
     let (status, result) = post_internal(&app, uri, Some(INTERNAL), body).await;
     assert_eq!(status, StatusCode::OK);
     assert!(result["urls"][0].as_str().unwrap().contains("/external/"));
@@ -594,6 +604,17 @@ async fn internal_media_signing_requires_service_token_and_https() {
         post_internal(&app, uri, Some(INTERNAL), json!({"urls": ["http://localhost/private"]}))
             .await
             .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post_internal(
+            &app,
+            uri,
+            Some(INTERNAL),
+            json!({"urls": ["https://other.test/cat.gif"]})
+        )
+        .await
+        .0,
         StatusCode::BAD_REQUEST
     );
 }

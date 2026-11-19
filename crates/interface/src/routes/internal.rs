@@ -34,7 +34,12 @@ pub async fn sign_media(
         || body.urls.iter().any(|raw| {
             raw.len() > 2048
                 || url::Url::parse(raw).map_or(true, |u| {
-                    u.scheme() != "https" || !u.username().is_empty() || u.password().is_some()
+                    u.scheme() != "https"
+                        || !u.username().is_empty()
+                        || u.password().is_some()
+                        || !u
+                            .host_str()
+                            .is_some_and(|host| state.gif_media_hosts.iter().any(|allowed| allowed == host))
                 })
         })
     {

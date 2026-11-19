@@ -167,6 +167,7 @@ is reported at once.
 | `ATTACHMENT_SIGNING_KEY` | yes | | HMAC key (32+ chars, secret) signing attachment download URLs |
 | `ATTACHMENT_URL_TTL_SECONDS` | no | `86400` | lifetime of a signed download URL |
 | `CORS_ALLOWED_ORIGINS` | no | `null,http://localhost:5173` | comma-separated origins allowed by CORS (`null` is the packaged `file://` client) |
+| `GIF_MEDIA_HOSTS` | no | empty | Comma-separated exact provider media hosts permitted for internal GIF preview signing. Empty disables signing. Must match the API setting. |
 
 ## Pending owner actions
 
