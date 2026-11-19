@@ -7,7 +7,9 @@ use axum::http::StatusCode;
 use contracts::{AckRequest, AckResponse, BulkDeleteRequest, CreateMessageRequest, EditMessageRequest, MessageDto};
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, ForwardSource};
 use discordy_messages_domain::attachment::AttachmentMetadataEdit;
-use discordy_messages_domain::{FLAG_SUPPRESS_NOTIFICATIONS, HistoryCursor, MessageEdit, PageLimit};
+use discordy_messages_domain::{
+    FLAG_IS_VOICE_MESSAGE, FLAG_SUPPRESS_NOTIFICATIONS, HistoryCursor, MessageEdit, PageLimit,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -75,6 +77,38 @@ pub(crate) fn json_texts(values: Option<Vec<Value>>) -> Vec<String> {
     values.unwrap_or_default().iter().map(Value::to_string).collect()
 }
 
+pub(crate) fn attachment_reference(a: contracts::AttachmentReferenceDto) -> Result<AttachmentReference, ApiError> {
+    let duration_ms = a
+        .duration_secs
+        .map(|seconds| {
+            if !seconds.is_finite() || seconds <= 0.0 || seconds > 600.0 {
+                return Err(ApiError::invalid(
+                    "duration_secs",
+                    "must be greater than zero and at most 600 seconds",
+                ));
+            }
+            Ok((seconds * 1000.0).round().max(1.0) as u32)
+        })
+        .transpose()?;
+    if let Some(waveform) = &a.waveform {
+        if waveform.is_empty()
+            || waveform.len() > 1024
+            || !waveform
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+        {
+            return Err(ApiError::invalid("waveform", "must be bounded base64 samples"));
+        }
+    }
+    Ok(AttachmentReference {
+        uploaded_filename: a.uploaded_filename,
+        description: a.description,
+        flags: a.flags.unwrap_or(0),
+        duration_ms,
+        waveform: a.waveform,
+    })
+}
+
 pub async fn create(
     State(state): State<AppState>,
     Caller(caller): Caller,
@@ -112,18 +146,14 @@ pub async fn create(
             .attachments
             .unwrap_or_default()
             .into_iter()
-            .map(|a| AttachmentReference {
-                uploaded_filename: a.uploaded_filename,
-                description: a.description,
-                flags: a.flags.unwrap_or(0),
-            })
-            .collect(),
+            .map(attachment_reference)
+            .collect::<Result<Vec<_>, _>>()?,
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,
         suppress_reply_ping: body.allowed_mentions.and_then(|m| m.replied_user) == Some(false),
         forward,
-        flags: body.flags.unwrap_or(0) & FLAG_SUPPRESS_NOTIFICATIONS,
+        flags: body.flags.unwrap_or(0) & (FLAG_SUPPRESS_NOTIFICATIONS | FLAG_IS_VOICE_MESSAGE),
         webhook: None,
         interaction: None,
         ..CreateMessageCommand::default()

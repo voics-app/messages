@@ -33,7 +33,8 @@ pub use mention_policy::{NotificationLevel, NotificationRecipient};
 pub use mentions::Mentions;
 pub use message::{Call, Message, MessageDraft, MessageEdit, MessageKind};
 pub use message_origin::{
-    FLAG_EPHEMERAL, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, InteractionLink, WebhookAuthor,
+    FLAG_EPHEMERAL, FLAG_IS_VOICE_MESSAGE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, InteractionLink,
+    WebhookAuthor,
 };
 pub use paging::{HistoryCursor, PageLimit, Scan, ScanDirection};
 pub use permissions::Permissions;

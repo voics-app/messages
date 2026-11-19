@@ -76,6 +76,8 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
         size: 512,
         width: None,
         height: None,
+        duration_ms: None,
+        waveform: None,
         description: Some("a cat".into()),
         flags: 8,
     });

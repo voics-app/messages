@@ -9,7 +9,7 @@ use contracts::{
     ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
-use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
+use discordy_messages_application::use_cases::CreateMessageCommand;
 use discordy_messages_domain::{Call, InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
 
@@ -96,12 +96,8 @@ fn internal_command(
             .attachments
             .unwrap_or_default()
             .into_iter()
-            .map(|a| AttachmentReference {
-                uploaded_filename: a.uploaded_filename,
-                description: a.description,
-                flags: a.flags.unwrap_or(0),
-            })
-            .collect(),
+            .map(super::messages::attachment_reference)
+            .collect::<Result<Vec<_>, _>>()?,
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,

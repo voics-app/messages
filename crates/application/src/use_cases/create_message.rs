@@ -27,6 +27,8 @@ pub struct AttachmentReference {
     pub description: Option<String>,
     /// Requested `ATTACHMENT_FLAG_*` bits (only the spoiler bit is kept).
     pub flags: u32,
+    pub duration_ms: Option<u32>,
+    pub waveform: Option<String>,
 }
 
 /// The message to forward (message_reference type FORWARD).
@@ -121,6 +123,13 @@ impl CreateMessage {
         let with_attachments = !command.attachments.is_empty();
         let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
             a.ensure_can_send(with_attachments)?;
+            if command.flags & discordy_messages_domain::FLAG_IS_VOICE_MESSAGE != 0
+                && !a
+                    .permissions
+                    .has(discordy_messages_domain::Permissions::SEND_VOICE_MESSAGES)
+            {
+                return Err(DomainError::MissingPermissions);
+            }
             ensure_tts_permission(a, command.tts)
         })
         .await?;
@@ -341,6 +350,8 @@ impl CreateMessage {
                 size: stored.size,
                 width: None,
                 height: None,
+                duration_ms: reference.duration_ms,
+                waveform: reference.waveform.clone(),
                 description: validate_description(reference.description.as_deref())?,
                 flags: upload_flags(&key.filename, reference.flags),
                 filename: key.filename,
@@ -606,6 +617,8 @@ mod tests {
             uploaded_filename: format!("attachments/{CHANNEL}/77/cat.png"),
             description: None,
             flags: 0,
+            duration_ms: None,
+            waveform: None,
         }];
         assert!(CreateMessage::new(&h.ports).execute(cmd.clone()).await.is_err());
 
@@ -627,6 +640,8 @@ mod tests {
             uploaded_filename: format!("attachments/{CHANNEL}/77/{name}"),
             description: description.map(str::to_owned),
             flags,
+            duration_ms: None,
+            waveform: None,
         };
         let mut cmd = command("");
         cmd.attachments = vec![reference("a.png", Some(" a red cat "), 8)];
@@ -918,6 +933,8 @@ mod tests {
             size: 5,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }];
@@ -952,6 +969,8 @@ mod tests {
             size: 5,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }];

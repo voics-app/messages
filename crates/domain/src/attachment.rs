@@ -30,6 +30,9 @@ pub struct Attachment {
     pub size: u64,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Voice recording duration in milliseconds and base64 amplitude samples.
+    pub duration_ms: Option<u32>,
+    pub waveform: Option<String>,
     /// Alt text.
     pub description: Option<String>,
     /// `ATTACHMENT_FLAG_*` bits.

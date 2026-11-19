@@ -30,6 +30,8 @@ pub(crate) struct AttachmentUdt {
     height: Option<i32>,
     description: Option<String>,
     flags: Option<i32>,
+    duration_ms: Option<i32>,
+    waveform: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, DeserializeRow, SerializeRow)]
@@ -217,6 +219,8 @@ pub(crate) fn attachment_udt(attachment: &Attachment) -> AttachmentUdt {
         height: attachment.height.map(|h| h as i32),
         description: attachment.description.clone(),
         flags: Some(attachment.flags as i32),
+        duration_ms: attachment.duration_ms.map(|ms| ms as i32),
+        waveform: attachment.waveform.clone(),
     }
 }
 
@@ -228,6 +232,8 @@ fn attachment_from_udt(udt: AttachmentUdt) -> Option<Attachment> {
         size: udt.size.max(0) as u64,
         width: udt.width.map(|w| w as u32),
         height: udt.height.map(|h| h as u32),
+        duration_ms: udt.duration_ms.and_then(|ms| u32::try_from(ms).ok()),
+        waveform: udt.waveform,
         description: udt.description,
         flags: udt.flags.unwrap_or(0).max(0) as u32,
     })
@@ -257,6 +263,10 @@ struct AttachmentJson {
     height: Option<u32>,
     description: Option<String>,
     flags: u32,
+    #[serde(default)]
+    duration_ms: Option<u32>,
+    #[serde(default)]
+    waveform: Option<String>,
 }
 
 fn snapshot_json(snapshot: &MessageSnapshot) -> String {
@@ -274,6 +284,8 @@ fn snapshot_json(snapshot: &MessageSnapshot) -> String {
                 height: a.height,
                 description: a.description.clone(),
                 flags: a.flags,
+                duration_ms: a.duration_ms,
+                waveform: a.waveform.clone(),
             })
             .collect(),
         embeds: snapshot.embeds.clone(),
@@ -301,6 +313,8 @@ fn snapshot_from_json(raw: &str) -> Option<MessageSnapshot> {
                     size: a.size,
                     width: a.width,
                     height: a.height,
+                    duration_ms: a.duration_ms,
+                    waveform: a.waveform,
                     description: a.description,
                     flags: a.flags,
                 })
@@ -353,6 +367,8 @@ mod tests {
                 size: 10,
                 width: Some(4),
                 height: None,
+                duration_ms: None,
+                waveform: None,
                 description: Some("alt".into()),
                 flags: 8,
             }],
@@ -434,6 +450,8 @@ mod tests {
                 size: 10,
                 width: Some(4),
                 height: Some(5),
+                duration_ms: None,
+                waveform: None,
                 description: Some("alt".into()),
                 flags: 8,
             }],

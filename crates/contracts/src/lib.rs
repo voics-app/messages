@@ -244,7 +244,7 @@ pub struct UpdateCallRequest {
     pub ended_timestamp: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachmentDto {
     pub id: String,
     pub filename: String,
@@ -257,6 +257,10 @@ pub struct AttachmentDto {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub duration_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub waveform: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
     /// `AttachmentFlags` bit set; explicit zero overrides a SPOILER_ filename.
@@ -317,7 +321,7 @@ pub struct AllowedMentionsDto {
     pub replied_user: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct AttachmentReferenceDto {
     #[serde(default)]
     pub id: Option<Value>,
@@ -330,6 +334,10 @@ pub struct AttachmentReferenceDto {
     /// `AttachmentFlags` bits; only IS_SPOILER (8) is kept.
     #[serde(default)]
     pub flags: Option<u32>,
+    #[serde(default)]
+    pub duration_secs: Option<f64>,
+    #[serde(default)]
+    pub waveform: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
