@@ -15,5 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Serial read retry regression
+        run: cargo test --locked -p discordy-messages-infrastructure --lib retry_tests
       - name: Real Scylla poll concurrency and lifecycle
         run: cargo test --locked -p discordy-messages-infrastructure --test poll_persistence -- --nocapture

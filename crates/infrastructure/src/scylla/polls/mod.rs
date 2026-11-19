@@ -5,6 +5,7 @@ mod rows;
 mod schema;
 mod statements;
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use discordy_messages_application::ports::{
 use discordy_messages_domain::poll::{PollAggregate, PollDefinition, PollError, PollStatus, PollTransition};
 use discordy_messages_domain::{Snowflake, UserId};
 use scylla::client::session::Session;
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 
 use super::{execute, port_error};
 use statements::{Statements, applied};
@@ -44,6 +46,38 @@ fn exhausted() -> PollStoreError {
     PortError::new("poll contention exceeded the bounded retry budget").into()
 }
 
+// Retrying a read cannot replay an uncertain conditional mutation. Keep both the
+// number of retries and the total time bounded under a sustained outage.
+async fn retry_serial_read<T, E, F, Fut>(mut read: F, retryable: impl Fn(&E) -> bool) -> Result<T, Option<E>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let operation = async {
+        for attempt in 0..3 {
+            match read().await {
+                Ok(value) => return Ok(value),
+                Err(error) if attempt < 2 && retryable(&error) => {
+                    metrics::counter!("poll_serial_read_retries_total").increment(1);
+                    tokio::time::sleep(Duration::from_millis(25 * (attempt + 1))).await;
+                }
+                Err(error) => return Err(Some(error)),
+            }
+        }
+        unreachable!("the final attempt always returns")
+    };
+    tokio::time::timeout(Duration::from_secs(15), operation)
+        .await
+        .map_err(|_| None)?
+}
+
+fn serial_read_timed_out(error: &ExecutionError) -> bool {
+    matches!(
+        error,
+        ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::ReadTimeout { .. }, _))
+    )
+}
+
 async fn conflict(attempt: usize, salt: u64) {
     metrics::counter!("poll_cas_conflicts_total").increment(1);
     tokio::time::sleep(Duration::from_millis(1 + (attempt as u64 + salt) % 8)).await;
@@ -67,13 +101,20 @@ impl ScyllaPollRepository {
 
     async fn read(&self, key: PollKey, viewer: i64) -> PollStoreResult<Option<PollSnapshotState>> {
         let (channel, message) = key_values(key)?;
-        let result = self
-            .session
-            .execute_unpaged(&self.statements.read, (channel, message, viewer))
-            .await
-            .map_err(port_error)?
-            .into_rows_result()
-            .map_err(port_error)?;
+        let result = retry_serial_read(
+            || {
+                self.session
+                    .execute_unpaged(&self.statements.read, (channel, message, viewer))
+            },
+            serial_read_timed_out,
+        )
+        .await
+        .map_err(|error| match error {
+            Some(error) => port_error(error),
+            None => PortError::new("poll serial read exceeded its deadline"),
+        })?
+        .into_rows_result()
+        .map_err(port_error)?;
         let rows = result
             .rows::<rows::StoredRow>()
             .map_err(port_error)?
@@ -293,5 +334,77 @@ impl PollRepository for ScyllaPollRepository {
         )
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::{retry_serial_read, serial_read_timed_out};
+    use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
+    use scylla::statement::Consistency;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn retries_only_transient_reads_and_stops_after_three_attempts() {
+        let calls = AtomicUsize::new(0);
+        let result = retry_serial_read(
+            || async {
+                if calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err("timeout")
+                } else {
+                    Ok(42)
+                }
+            },
+            |error| *error == "timeout",
+        )
+        .await;
+        assert_eq!(result, Ok(42));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        let calls = AtomicUsize::new(0);
+        let result: Result<(), _> = retry_serial_read(
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err("timeout")
+            },
+            |error| *error == "timeout",
+        )
+        .await;
+        assert_eq!(result, Err(Some("timeout")));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        let calls = AtomicUsize::new(0);
+        let result: Result<(), _> = retry_serial_read(
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err("other")
+            },
+            |error| *error == "timeout",
+        )
+        .await;
+        assert_eq!(result, Err(Some("other")));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn classifies_scylla_read_timeout_only() {
+        let timeout = ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            DbError::ReadTimeout {
+                consistency: Consistency::Serial,
+                received: 0,
+                required: 1,
+                data_present: false,
+            },
+            "contention".into(),
+        ));
+        assert!(serial_read_timed_out(&timeout));
+        let other =
+            ExecutionError::LastAttemptError(RequestAttemptError::DbError(DbError::Invalid, "invalid query".into()));
+        assert!(!serial_read_timed_out(&other));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn serial_read_has_an_overall_deadline() {
+        let result = retry_serial_read(|| std::future::pending::<Result<(), ()>>(), |_| true).await;
+        assert_eq!(result, Err(None));
     }
 }
