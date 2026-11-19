@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use discordy_messages_domain::{Bucket, ChannelId, Message, MessageId, ScanDirection};
+use discordy_messages_domain::{Bucket, ChannelId, GuildId, Message, MessageId, ScanDirection};
 
 use crate::error::PortError;
 
@@ -19,6 +19,9 @@ pub struct BucketQuery {
 pub trait MessageRepository: Send + Sync {
     /// Stores a new message and advances the channel's last message id.
     async fn insert(&self, message: &Message) -> Result<(), PortError>;
+
+    /// Persist a message and its content-free guild activity marker as one write.
+    async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError>;
 
     /// Overwrites the mutable fields of an existing message.
     async fn update(&self, message: &Message) -> Result<(), PortError>;

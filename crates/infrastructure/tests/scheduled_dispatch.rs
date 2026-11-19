@@ -40,6 +40,20 @@ async fn independent_workers_insert_once_and_lost_success_never_resends_after_de
             .is_some()
     );
     assert_eq!(f.harness.events.events.lock().unwrap().len(), 1);
+    let sent_id = sent.message_id.unwrap();
+    let day = (sent_id.unix_millis() / 86_400_000) as i64;
+    let result = f
+        ._database
+        .session
+        .query_unpaged(
+            "SELECT count(*) FROM guild_message_activity WHERE guild_id = ? AND utc_day = ?",
+            (discordy_messages_application::fakes::GUILD.value() as i64, day),
+        )
+        .await
+        .unwrap();
+    let rows = result.into_rows_result().unwrap();
+    let (count,): (i64,) = rows.single_row().unwrap();
+    assert_eq!(count, 1, "scheduled insert writes the same durable marker");
 
     let uncertain = f.command(2);
     service.create(uncertain.clone()).await.unwrap();

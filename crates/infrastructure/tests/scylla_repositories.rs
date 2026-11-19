@@ -56,6 +56,7 @@ async fn scylla_adapters_against_a_real_node() {
     let activity = ScyllaActivityRepository::new(Arc::clone(&session)).await.unwrap();
 
     message_crud(messages.as_ref()).await;
+    guild_activity_markers(messages.as_ref(), &session).await;
     system_message_payloads(messages.as_ref()).await;
     bucketed_history(Arc::clone(&messages), Arc::clone(&reactions)).await;
     last_message_id_never_regresses(messages.as_ref()).await;
@@ -63,6 +64,35 @@ async fn scylla_adapters_against_a_real_node() {
     pins_round_trip(&pins).await;
     read_states_round_trip(&read_states).await;
     activity_counts(&activity).await;
+}
+
+async fn guild_activity_markers(repo: &ScyllaMessageRepository, session: &scylla::client::session::Session) {
+    let guild = Snowflake::new(777);
+    let channel = Snowflake::new(778);
+    let before = message(channel, id_at(86_400_000 - 1, 0), "before midnight");
+    let after = message(channel, id_at(86_400_000, 0), "after midnight");
+    repo.insert_scoped(&before, Some(guild)).await.unwrap();
+    repo.insert_scoped(&before, Some(guild)).await.unwrap();
+    repo.insert_scoped(&after, Some(guild)).await.unwrap();
+    let dm = message(Snowflake::new(779), id_at(86_400_000, 1), "private");
+    repo.insert_scoped(&dm, None).await.unwrap();
+    repo.delete(channel, &[before.id]).await.unwrap();
+    let day = (before.id.unix_millis() / 86_400_000) as i64;
+    for expected_day in [day, day + 1] {
+        let result = session
+            .query_unpaged(
+                "SELECT count(*) FROM guild_message_activity WHERE guild_id = ? AND utc_day = ?",
+                (777_i64, expected_day),
+            )
+            .await
+            .unwrap();
+        let rows = result.into_rows_result().unwrap();
+        let (count,): (i64,) = rows.single_row().unwrap();
+        assert_eq!(
+            count, 1,
+            "retry is idempotent, deletion preserves the marker and UTC days split"
+        );
+    }
 }
 
 async fn message_crud(repo: &ScyllaMessageRepository) {

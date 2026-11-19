@@ -3,8 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{BucketQuery, MessageRepository};
-use discordy_messages_domain::{Bucket, ChannelId, Message, MessageId, ScanDirection};
+use discordy_messages_domain::{Bucket, ChannelId, GuildId, Message, MessageId, ScanDirection};
 use scylla::client::session::Session;
+use scylla::statement::batch::Batch;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::value::CqlTimestamp;
 
@@ -14,6 +15,7 @@ use super::{execute, fetch_all, prepare};
 pub struct ScyllaMessageRepository {
     session: Arc<Session>,
     insert: PreparedStatement,
+    insert_guild: Batch,
     advance_last: PreparedStatement,
     update_content: PreparedStatement,
     set_pinned: PreparedStatement,
@@ -34,21 +36,35 @@ impl ScyllaMessageRepository {
             statement.set_is_idempotent(false);
             statement.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
         }
+        repository.insert_guild.set_is_idempotent(false);
+        repository
+            .insert_guild
+            .set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
         Ok(repository)
     }
 
     pub async fn new(session: Arc<Session>) -> Result<Self, PortError> {
         let s = session.as_ref();
         let select = format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE channel_id = ? AND bucket = ?");
+        let insert = prepare(
+            s,
+            &format!(
+                "INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES ({})",
+                vec!["?"; MESSAGE_COLUMN_COUNT].join(", ")
+            ),
+        )
+        .await?;
+        let marker = prepare(
+            s,
+            "INSERT INTO guild_message_activity (guild_id, utc_day, message_id) VALUES (?, ?, ?)",
+        )
+        .await?;
+        let mut insert_guild = Batch::default();
+        insert_guild.append_statement(insert.clone());
+        insert_guild.append_statement(marker);
         Ok(Self {
-            insert: prepare(
-                s,
-                &format!(
-                    "INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES ({})",
-                    vec!["?"; MESSAGE_COLUMN_COUNT].join(", ")
-                ),
-            )
-            .await?,
+            insert,
+            insert_guild,
             advance_last: prepare(
                 s,
                 "UPDATE channel_last_message USING TIMESTAMP ? SET last_message_id = ? WHERE channel_id = ?",
@@ -96,7 +112,22 @@ impl ScyllaMessageRepository {
 #[async_trait]
 impl MessageRepository for ScyllaMessageRepository {
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
-        execute(&self.session, &self.insert, MessageRow::from_message(message)).await?;
+        self.insert_scoped(message, None).await
+    }
+
+    async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError> {
+        if let Some(guild_id) = guild_id {
+            let day = (message.id.unix_millis() / 86_400_000) as i64;
+            self.session
+                .batch(
+                    &self.insert_guild,
+                    (MessageRow::from_message(message), (id(guild_id), day, id(message.id))),
+                )
+                .await
+                .map_err(super::port_error)?;
+        } else {
+            execute(&self.session, &self.insert, MessageRow::from_message(message)).await?;
+        }
         // The write timestamp orders by message id (creation millisecond, then
         // sequence), so concurrent inserts can never move the channel's last
         // message id backwards. ScyllaDB rejects timestamps that are not

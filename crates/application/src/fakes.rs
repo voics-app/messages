@@ -41,6 +41,13 @@ pub struct InMemoryMessages {
 
 #[async_trait]
 impl MessageRepository for InMemoryMessages {
+    async fn insert_scoped(
+        &self,
+        message: &Message,
+        _guild_id: Option<discordy_messages_domain::GuildId>,
+    ) -> Result<(), PortError> {
+        self.insert(message).await
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.rows
             .lock()

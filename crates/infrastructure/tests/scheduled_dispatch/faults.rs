@@ -9,7 +9,7 @@ use discordy_messages_application::{
     ports::{BucketQuery, MessageRepository, scheduled::*},
 };
 use discordy_messages_domain::scheduled::{ScheduleChange, ScheduledMessage};
-use discordy_messages_domain::{ChannelId, Message, MessageId, UserId};
+use discordy_messages_domain::{ChannelId, GuildId, Message, MessageId, UserId};
 
 pub struct ObservedMessages {
     pub inner: Arc<dyn MessageRepository>,
@@ -19,6 +19,14 @@ pub struct ObservedMessages {
 
 #[async_trait]
 impl MessageRepository for ObservedMessages {
+    async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.insert_scoped(message, guild_id).await?;
+        if self.lose_result.swap(false, Ordering::SeqCst) {
+            return Err(PortError::new("fixture lost successful message-write result"));
+        }
+        Ok(())
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.insert(message).await?;

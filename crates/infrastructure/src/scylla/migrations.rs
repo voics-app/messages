@@ -34,6 +34,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_message_tts",
         include_str!("../../../../migrations/0007_message_tts.cql"),
     ),
+    (
+        "0014_guild_message_activity",
+        include_str!("../../../../migrations/0014_guild_message_activity.cql"),
+    ),
 ];
 
 /// Creates the keyspace when missing (replication factor 1: the platform

@@ -225,7 +225,7 @@ impl CreateMessage {
     ) -> AppResult<MessageView> {
         let nonce = command.nonce.clone();
         let message = self.compose_message(access, &command, forward).await?;
-        self.messages.insert(&message).await?;
+        self.messages.insert_scoped(&message, access.guild_id).await?;
         self.publish_stored(&message, access, nonce).await;
         Ok(MessageView::without_reactions(message))
     }
