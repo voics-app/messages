@@ -185,7 +185,10 @@ impl CreateMessage {
         marker.embeds.clear();
         marker.components.clear();
         if self.messages.insert_forum_once(&marker, &message).await? {
-            self.publish_stored(&message, &access, None).await;
+            // The API transaction publishes MESSAGE_CREATE through its durable outbox
+            // once it has confirmed storage and made the thread visible.
+            self.record_side_effects(&message, access.guild_id).await;
+            self.unfurl.spawn(&message);
             return Ok(MessageView::without_reactions(message));
         }
         match self.messages.forum_marker(channel_id).await? {
@@ -480,7 +483,7 @@ mod tests {
         let stored = h.messages.find(CHANNEL, id).await.unwrap().unwrap();
         assert_eq!(stored.author_id, ALICE);
         assert_eq!(stored.content, "opening");
-        assert_eq!(h.events.events.lock().unwrap().len(), 1);
+        assert!(h.events.events.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -497,7 +500,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(replay.message.id, id);
-        assert_eq!(h.events.events.lock().unwrap().len(), 1);
+        assert!(h.events.events.lock().unwrap().is_empty());
         assert!(
             use_case
                 .execute_forum_start(CHANNEL, ALICE, id, "different".into())
