@@ -69,6 +69,14 @@ impl MessageRepository for InMemoryMessages {
         }
         Ok(())
     }
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError> {
+        if let Some(message) = self.rows.lock().unwrap().get_mut(&(channel_id, message_id)) {
+            message.flags |= discordy_messages_domain::FLAG_CROSSPOSTED;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.rows
             .lock()

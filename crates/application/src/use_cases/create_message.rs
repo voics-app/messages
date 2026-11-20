@@ -36,6 +36,18 @@ pub struct ForwardSource {
     pub message_id: MessageId,
 }
 
+/// Trusted, journalled delivery of one announcement into a follower channel.
+pub struct CrosspostDelivery {
+    pub source_channel: ChannelId,
+    pub target_channel: ChannelId,
+    pub message_id: MessageId,
+    pub webhook_id: UserId,
+    pub webhook_name: String,
+    pub content: String,
+    pub embeds: Vec<String>,
+    pub attachments: Vec<Attachment>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateMessageCommand {
     pub channel_id: ChannelId,
@@ -101,6 +113,57 @@ mod mention_tests;
 mod scheduled;
 
 impl CreateMessage {
+    pub async fn deliver_crosspost(&self, command: CrosspostDelivery) -> AppResult<MessageView> {
+        let access = self.access.channel(command.target_channel).await?;
+        if access.guild_id.is_none() || access.channel_type != 0 {
+            return Err(DomainError::invalid("channel_id", "must be a guild text channel").into());
+        }
+        access.ensure_standard_delivery()?;
+        if let Some(existing) = self.messages.find(command.target_channel, command.message_id).await? {
+            if existing.webhook.as_ref().map(|webhook| webhook.webhook_id) == Some(command.webhook_id)
+                && existing.flags & discordy_messages_domain::FLAG_IS_CROSSPOST != 0
+            {
+                return Ok(MessageView::without_reactions(existing));
+            }
+            return Err(DomainError::invalid("message_id", "reserved identity is already in use").into());
+        }
+        for attachment in &command.attachments {
+            if !self
+                .storage
+                .copy(
+                    &attachment.key(command.source_channel),
+                    &attachment.key(command.target_channel),
+                )
+                .await?
+            {
+                return Err(DomainError::invalid("attachments", "source attachment is unavailable").into());
+            }
+        }
+        let draft = MessageDraft {
+            content: command.content,
+            embeds: command.embeds,
+            attachments: command.attachments,
+            flags: discordy_messages_domain::FLAG_IS_CROSSPOST,
+            webhook: Some(WebhookAuthor {
+                webhook_id: command.webhook_id,
+                username: Some(command.webhook_name),
+                avatar_url: None,
+            }),
+            ..MessageDraft::default()
+        };
+        let mut message = Message::compose(
+            command.message_id,
+            command.target_channel,
+            command.webhook_id,
+            draft,
+            false,
+        )?;
+        // A publisher cannot notify arbitrary users in the destination server.
+        message.mentions = Default::default();
+        self.messages.insert_scoped(&message, access.guild_id).await?;
+        self.publish_stored(&message, &access, None).await;
+        Ok(MessageView::without_reactions(message))
+    }
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
             access: ports.access.clone(),
@@ -490,6 +553,28 @@ mod tests {
         );
         assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
         assert!(h.events.kinds().is_empty());
+    }
+
+    #[tokio::test]
+    async fn crosspost_delivery_records_one_guild_activity_marker() {
+        let h = Harness::new();
+        *h.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+        let make = || CrosspostDelivery {
+            source_channel: Snowflake::new(900),
+            target_channel: CHANNEL,
+            message_id: Snowflake::new(901),
+            webhook_id: Snowflake::new(902),
+            webhook_name: "News".into(),
+            content: "announcement".into(),
+            embeds: vec![],
+            attachments: vec![],
+        };
+        let create = CreateMessage::new(&h.ports);
+        let sent = create.deliver_crosspost(make()).await.unwrap();
+        let day = (sent.message.id.unix_millis() / 86_400_000) as i64;
+        assert_eq!(h.messages.guild_message_count(GUILD, day).await.unwrap(), 1);
+        create.deliver_crosspost(make()).await.unwrap();
+        assert_eq!(h.messages.guild_message_count(GUILD, day).await.unwrap(), 1);
     }
 
     #[tokio::test]
