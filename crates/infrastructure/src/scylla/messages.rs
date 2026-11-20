@@ -52,8 +52,9 @@ impl ScyllaMessageRepository {
         forum_batch.set_serial_consistency(Some(SerialConsistency::Serial));
         forum_batch.set_is_idempotent(false);
         forum_batch.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
-        forum_batch.append_statement(format!("{insert_sql} IF NOT EXISTS"));
-        forum_batch.append_statement(insert_sql);
+        let marker_sql = format!("{insert_sql} IF NOT EXISTS");
+        forum_batch.append_statement(marker_sql.as_str());
+        forum_batch.append_statement(insert_sql.as_str());
         let forum_insert = s.prepare_batch(&forum_batch).await.map_err(port_error)?;
         Ok(Self {
             forum_insert,
