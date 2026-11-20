@@ -18,7 +18,6 @@ use crate::application::{EventHandler, PortError};
 const FETCH_BYTES: std::ops::Range<i32> = 1..4_000_000;
 const MAX_WAIT_MS: i32 = 1_000;
 const RETRY_DELAY: Duration = Duration::from_secs(3);
-const USER_TOPIC: &str = "discordy.user.v1";
 
 fn port_error(error: impl std::fmt::Display) -> PortError {
     PortError::new(format!("redpanda: {error}"))
@@ -66,37 +65,8 @@ impl MessageTopic {
             let handler = Arc::clone(&handler);
             tokio::spawn(async move { run_partition(source, handler, partition, next).await });
         }
-        let client = Arc::clone(&self.client);
-        tokio::spawn(async move {
-            loop {
-                if let Err(error) = spawn_user_partitions(&client, Arc::clone(&handler)).await {
-                    tracing::warn!(%error, "event reminder topic unavailable");
-                    tokio::time::sleep(RETRY_DELAY).await;
-                } else {
-                    break;
-                }
-            }
-        });
         Ok(())
     }
-}
-
-async fn spawn_user_partitions(client: &Client, handler: Arc<EventHandler>) -> Result<(), PortError> {
-    let topics = client.list_topics().await.map_err(port_error)?;
-    let topic = topics
-        .iter()
-        .find(|topic| topic.name == USER_TOPIC)
-        .ok_or_else(|| PortError::new("user topic does not exist"))?;
-    for partition in topic.partitions.iter().copied() {
-        let source = client
-            .partition_client(USER_TOPIC, partition, UnknownTopicHandling::Retry)
-            .await
-            .map_err(port_error)?;
-        let next = source.get_offset(OffsetAt::Latest).await.map_err(port_error)?;
-        let handler = Arc::clone(&handler);
-        tokio::spawn(async move { run_partition(source, handler, partition, next).await });
-    }
-    Ok(())
 }
 
 async fn run_partition(source: PartitionClient, handler: Arc<EventHandler>, partition: i32, mut next: i64) {

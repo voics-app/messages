@@ -206,21 +206,29 @@ impl ApnsSender {
             OutboundPush::Alert(_) => unix_seconds() + self.config.ttl.as_secs(),
             OutboundPush::Voip(_) => 0,
         };
-        let response = self
+        let mut request = self
             .http
             .post(format!("{}/3/device/{token}", self.base_url(environment)))
             .header("authorization", format!("bearer {}", self.provider_token()?))
             .header("apns-topic", topic)
             .header("apns-push-type", push_type)
             .header("apns-priority", "10")
-            .header("apns-expiration", expiration.to_string())
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|error| SendError::Retry {
-                reason: format!("transport: {error}"),
-                after: None,
-            })?;
+            .header("apns-expiration", expiration.to_string());
+        if let OutboundPush::Alert(alert) = push {
+            if alert
+                .data
+                .iter()
+                .any(|(key, value)| key == "type" && value == "scheduled_event")
+                && alert.thread_id.len() <= 64
+                && alert.thread_id.is_ascii()
+            {
+                request = request.header("apns-collapse-id", &alert.thread_id);
+            }
+        }
+        let response = request.json(&payload).send().await.map_err(|error| SendError::Retry {
+            reason: format!("transport: {error}"),
+            after: None,
+        })?;
         let status = response.status().as_u16();
         if status == 200 {
             return Ok(());

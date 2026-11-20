@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::application::{
-    ChannelTargets, DeviceToken, Environment, EventReminder, Platform, PortError, Target, TargetDirectory,
-    TokenRegistry,
+    ChannelTargets, DeviceToken, Environment, EventDelivery, EventDeliveryDirectory, Platform, PortError, Target,
+    TargetDirectory, TokenRegistry,
 };
 use crate::domain::{ChannelContext, Level, Recipient};
 
@@ -90,17 +90,6 @@ struct TokenBody {
     only_mentions: bool,
 }
 
-#[derive(Deserialize)]
-struct EventTargetsBody {
-    users: Vec<EventTargetBody>,
-}
-
-#[derive(Deserialize)]
-struct EventTargetBody {
-    user_id: String,
-    tokens: Vec<TokenBody>,
-}
-
 impl TokenBody {
     /// A token of a platform or environment this version does not know is left out.
     fn into_token(self) -> Option<DeviceToken> {
@@ -121,6 +110,63 @@ impl TokenBody {
             previews: self.previews,
             only_mentions: self.only_mentions,
         })
+    }
+}
+
+#[async_trait]
+impl EventDeliveryDirectory for ApiClient {
+    async fn claim(&self) -> Result<Option<EventDelivery>, PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/claim",
+                self.base_url
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event claim answered {}", response.status())));
+        }
+        response.json().await.map_err(PortError::new)
+    }
+
+    async fn resolve(&self, delivery: &EventDelivery) -> Result<Option<DeviceToken>, PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/{}/resolve",
+                self.base_url, delivery.delivery_id
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .json(&serde_json::json!({"lease_id": delivery.lease_id}))
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event resolve answered {}", response.status())));
+        }
+        let token: Option<TokenBody> = response.json().await.map_err(PortError::new)?;
+        Ok(token.and_then(TokenBody::into_token))
+    }
+
+    async fn finish(&self, delivery: &EventDelivery, retry_after_secs: Option<u32>) -> Result<(), PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/{}/finish",
+                self.base_url, delivery.delivery_id
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .json(&serde_json::json!({"lease_id": delivery.lease_id, "retry_after_secs": retry_after_secs}))
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event finish answered {}", response.status())));
+        }
+        Ok(())
     }
 }
 
@@ -159,42 +205,6 @@ impl From<TargetsBody> for ChannelTargets {
 
 #[async_trait]
 impl TargetDirectory for ApiClient {
-    async fn event_targets(&self, reminder: &EventReminder) -> Result<Vec<DeviceToken>, PortError> {
-        let revision = reminder.revision.to_string();
-        let response = self
-            .http
-            .get(format!(
-                "{}/internal/v1/guilds/{}/scheduled-events/{}/push-targets",
-                self.base_url, reminder.guild_id, reminder.event_id
-            ))
-            .query(&[
-                ("user_id", reminder.user_id.as_str()),
-                ("scheduled_start_time", reminder.scheduled_start_time.as_str()),
-                ("revision", revision.as_str()),
-            ])
-            .header("x-internal-token", &self.internal_token)
-            .send()
-            .await
-            .map_err(|error| PortError::new(format!("api: {error}")))?;
-        if !response.status().is_success() {
-            return Err(PortError::new(format!(
-                "api answered {} for event push targets",
-                response.status()
-            )));
-        }
-        let body: EventTargetsBody = response
-            .json()
-            .await
-            .map_err(|error| PortError::new(format!("api: {error}")))?;
-        if body.users.iter().any(|user| user.user_id != reminder.user_id) || body.users.len() > 1 {
-            return Err(PortError::new("api returned unexpected event reminder recipient"));
-        }
-        Ok(body
-            .users
-            .into_iter()
-            .flat_map(|user| user.tokens.into_iter().filter_map(TokenBody::into_token))
-            .collect())
-    }
     async fn targets(&self, channel_id: &str, author_id: &str) -> Result<ChannelTargets, PortError> {
         let response = self
             .http
@@ -287,56 +297,14 @@ mod tests {
         async fn forget(State(log): State<Log>, axum::Json(body): axum::Json<Value>) {
             log.0.lock().unwrap().push(format!("DELETE {body}"));
         }
-        async fn event_targets(
-            State(log): State<Log>,
-            Path((guild, event)): Path<(String, String)>,
-            Query(query): Query<std::collections::HashMap<String, String>>,
-            headers: HeaderMap,
-        ) -> axum::Json<Value> {
-            log.0.lock().unwrap().push(format!(
-                "EVENT {guild}/{event} user={} start={} revision={} auth={}",
-                query["user_id"],
-                query["scheduled_start_time"],
-                query["revision"],
-                headers["x-internal-token"].to_str().unwrap()
-            ));
-            axum::Json(
-                json!({"users":[{"user_id":query["user_id"],"tokens":[{"platform":"fcm","token":"event-token","environment":"production","previews":false,"only_mentions":false}]}],"next_after":null}),
-            )
-        }
         let app = Router::new()
             .route("/internal/v1/channels/{id}/push-targets", get(targets))
             .route("/internal/v1/push-tokens", delete(forget))
-            .route(
-                "/internal/v1/guilds/{guild}/scheduled-events/{event}/push-targets",
-                get(event_targets),
-            )
             .with_state(log);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         url
-    }
-
-    #[tokio::test]
-    async fn event_targets_are_rechecked_with_schedule_revision_and_recipient() {
-        let log = Log::default();
-        let client = ApiClient::new(&serve(log.clone()).await, "secret".into()).unwrap();
-        let reminder = EventReminder {
-            guild_id: "1".into(),
-            event_id: "9".into(),
-            user_id: "42".into(),
-            scheduled_start_time: "2026-12-01T12:00:00Z".into(),
-            revision: 2,
-            dedupe_key: "key".into(),
-        };
-        let tokens = client.event_targets(&reminder).await.unwrap();
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].token, "event-token");
-        assert_eq!(
-            log.0.lock().unwrap()[0],
-            "EVENT 1/9 user=42 start=2026-12-01T12:00:00Z revision=2 auth=secret"
-        );
     }
 
     #[tokio::test]

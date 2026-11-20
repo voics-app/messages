@@ -64,24 +64,10 @@ pub struct ChannelTargets {
     pub targets: Vec<Target>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EventReminder {
-    pub guild_id: String,
-    pub event_id: String,
-    pub user_id: String,
-    pub scheduled_start_time: String,
-    pub revision: i64,
-    pub dedupe_key: String,
-}
-
 #[async_trait]
 pub trait TargetDirectory: Send + Sync {
     /// The members who may be pushed for a message `author_id` wrote in `channel_id`.
     async fn targets(&self, channel_id: &str, author_id: &str) -> Result<ChannelTargets, PortError>;
-    /// Rechecks access and returns only the current eligible user's live notification tokens.
-    async fn event_targets(&self, _reminder: &EventReminder) -> Result<Vec<DeviceToken>, PortError> {
-        Err(PortError::new("event reminder directory is unavailable"))
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -62,38 +62,13 @@ async fn fake_api(log: Record, delivery_mode: &'static str) -> String {
         log.add(format!("forget {}", body["token"].as_str().unwrap()));
         StatusCode::NO_CONTENT
     }
-    async fn event_targets() -> axum::Json<Value> {
-        axum::Json(
-            json!({"users":[{"user_id":"1","tokens":[{"platform":"apns","token":"aa11","environment":"sandbox","previews":false,"only_mentions":false}]}],"next_after":null}),
-        )
-    }
     serve(
         Router::new()
             .route("/internal/v1/channels/{id}/push-targets", get(targets))
             .route("/internal/v1/push-tokens", delete(forget))
-            .route(
-                "/internal/v1/guilds/{guild}/scheduled-events/{event}/push-targets",
-                get(event_targets),
-            )
             .with_state((log, body)),
     )
     .await
-}
-
-#[tokio::test]
-async fn event_start_reaches_the_recipient_with_generic_text() {
-    let started = time::OffsetDateTime::now_utc() - time::Duration::seconds(1);
-    let millis = i64::try_from(started.unix_timestamp_nanos() / 1_000_000).unwrap();
-    let start = started.format(&time::format_description::well_known::Rfc3339).unwrap();
-    let mut event = envelope("");
-    event.kind = "GUILD_SCHEDULED_EVENT_START".into();
-    event.target_user_ids = Some(vec!["1".into()]);
-    event.data = json!({"guild_id":"1", "guild_scheduled_event_id":"9", "scheduled_start_time":start, "revision":0, "dedupe_key":format!("1:9:{millis}:0:1")});
-    let sent = run_event("standard", event, 1).await;
-    assert_eq!(
-        sent,
-        vec!["sandbox aa11 topic=nl.example.app title=Event starting body=An event you are interested in is starting."]
-    );
 }
 
 async fn fake_apns(host: &'static str, log: Record) -> String {
