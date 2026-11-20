@@ -578,6 +578,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn webhook_and_system_posts_record_guild_activity_markers() {
+        let h = Harness::new();
+        *h.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+        let create = CreateMessage::new(&h.ports);
+        let webhook = create
+            .execute_internal(CreateMessageCommand {
+                channel_id: CHANNEL,
+                author_id: Snowflake::new(902),
+                content: "relay".into(),
+                webhook: Some(WebhookAuthor {
+                    webhook_id: Snowflake::new(902),
+                    username: Some("Hook".into()),
+                    avatar_url: None,
+                }),
+                ..CreateMessageCommand::default()
+            })
+            .await
+            .unwrap();
+        let system = create
+            .execute_internal(CreateMessageCommand {
+                channel_id: CHANNEL,
+                author_id: ALICE,
+                system_kind: Some(MessageKind::GuildMemberJoin),
+                ..CreateMessageCommand::default()
+            })
+            .await
+            .unwrap();
+        let day = (webhook.message.id.unix_millis() / 86_400_000) as i64;
+        assert_eq!((system.message.id.unix_millis() / 86_400_000) as i64, day);
+        assert_eq!(h.messages.guild_message_count(GUILD, day).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
     async fn webhook_posts_are_authored_by_the_webhook_without_a_member_check() {
         let h = Harness::new();
         h.access.set(Err(AccessError::NotMember));
