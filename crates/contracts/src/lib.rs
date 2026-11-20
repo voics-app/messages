@@ -449,6 +449,8 @@ pub struct ChannelAccessResponse {
     pub delivery_mode: String,
     #[serde(default)]
     pub recipient_ids: Vec<String>,
+    #[serde(default)]
+    pub thread_locked: Option<bool>,
 }
 
 /// api: `GET /internal/v1/channels/{channel_id}/delivery`. The channel's guild
@@ -460,6 +462,8 @@ pub struct ChannelRoutingResponse {
     pub delivery_mode: String,
     #[serde(default)]
     pub recipient_ids: Vec<String>,
+    #[serde(default)]
+    pub thread_locked: Option<bool>,
 }
 
 /// api: `POST /internal/v1/channels/{channel_id}/messages`. Bot, webhook and

@@ -885,6 +885,7 @@ pub fn guild_access(bits: u64) -> ChannelAccess {
         permissions: Permissions::new(bits),
         guild_id: Some(GUILD),
         channel_type: 0,
+        thread_locked: false,
         delivery_mode: DeliveryMode::Standard,
         recipient_ids: vec![],
     }
@@ -895,6 +896,7 @@ pub fn dm_access(mode: DeliveryMode) -> ChannelAccess {
         permissions: Permissions::new(MEMBER),
         guild_id: None,
         channel_type: 1,
+        thread_locked: false,
         delivery_mode: mode,
         recipient_ids: vec![ALICE, BOB],
     }

@@ -20,7 +20,6 @@ use super::{InternalApi, port_error};
 
 pub const ACCESS_CACHE_TTL: Duration = Duration::from_secs(5);
 const ACCESS_CACHE_CAPACITY: u64 = 100_000;
-const PRIVATE_THREAD: u8 = 12;
 
 type Answer = Result<ChannelAccess, AccessError>;
 
@@ -69,6 +68,7 @@ fn to_domain(body: ChannelAccessResponse) -> Result<ChannelAccess, PortError> {
         permissions: Permissions::new(body.permissions.parse().map_err(port_error)?),
         guild_id: body.guild_id.as_deref().map(parse_id).transpose()?,
         channel_type: body.channel_type,
+        thread_locked: body.thread_locked.unwrap_or(matches!(body.channel_type, 10..=12)),
         delivery_mode: body.delivery_mode.parse::<DeliveryMode>().map_err(port_error)?,
         recipient_ids: body
             .recipient_ids
@@ -86,7 +86,7 @@ impl ChannelAccessProvider for HttpChannelAccess {
             .try_get_with((channel_id, user_id), self.fetch(channel_id, user_id))
             .await
             .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?;
-        if matches!(&answer, Ok(access) if access.channel_type == PRIVATE_THREAD)
+        if matches!(&answer, Ok(access) if matches!(access.channel_type, 10..=12))
             || matches!(&answer, Err(AccessError::NotMember))
         {
             return self
@@ -132,6 +132,7 @@ fn routing_to_domain(body: ChannelRoutingResponse) -> Result<ChannelAccess, Port
         permissions: Permissions::new(0),
         guild_id: body.guild_id.as_deref().map(parse_id).transpose()?,
         channel_type: body.channel_type,
+        thread_locked: body.thread_locked.unwrap_or(matches!(body.channel_type, 10..=12)),
         delivery_mode: body.delivery_mode.parse::<DeliveryMode>().map_err(port_error)?,
         recipient_ids: body
             .recipient_ids

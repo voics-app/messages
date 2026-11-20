@@ -19,6 +19,7 @@ pub struct ChannelAccess {
     pub permissions: Permissions,
     pub guild_id: Option<GuildId>,
     pub channel_type: u8,
+    pub thread_locked: bool,
     pub delivery_mode: DeliveryMode,
     pub recipient_ids: Vec<UserId>,
 }
@@ -65,10 +66,20 @@ impl ChannelAccess {
         }
     }
 
+    /// A locked thread accepts no new messages until explicitly unlocked.
+    pub fn ensure_thread_unlocked(&self) -> Result<(), DomainError> {
+        if self.is_thread() && self.thread_locked {
+            Err(DomainError::MissingPermissions)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Sending requires the right permissions and a Standard channel: other
     /// delivery modes never touch the server's message store.
     pub fn ensure_can_send(&self, with_attachments: bool) -> Result<(), DomainError> {
         self.ensure_can_view()?;
+        self.ensure_thread_unlocked()?;
         let send = if self.is_thread() {
             Permissions::SEND_MESSAGES_IN_THREADS
         } else {
@@ -178,6 +189,7 @@ mod tests {
             permissions: Permissions::new(bits),
             guild_id: Some(Snowflake::new(1)),
             channel_type: 0,
+            thread_locked: false,
             delivery_mode: DeliveryMode::Standard,
             recipient_ids: vec![],
         }
@@ -188,8 +200,22 @@ mod tests {
             permissions: Permissions::new(bits),
             guild_id: None,
             channel_type: 1,
+            thread_locked: false,
             delivery_mode: mode,
             recipient_ids: vec![Snowflake::new(10), Snowflake::new(11)],
+        }
+    }
+
+    #[test]
+    fn locked_threads_reject_sends_even_for_administrators() {
+        for kind in [10, 11, 12] {
+            let mut thread = guild(Permissions::ADMINISTRATOR);
+            thread.channel_type = kind;
+            thread.thread_locked = true;
+            assert_eq!(thread.ensure_can_send(false), Err(DomainError::MissingPermissions));
+            assert_eq!(thread.ensure_thread_unlocked(), Err(DomainError::MissingPermissions));
+            thread.thread_locked = false;
+            assert!(thread.ensure_can_send(false).is_ok());
         }
     }
 
