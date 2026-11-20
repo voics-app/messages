@@ -19,6 +19,9 @@ pub struct ObservedMessages {
 
 #[async_trait]
 impl MessageRepository for ObservedMessages {
+    async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError> {
+        self.inner.guild_activity_source_initialized_ms().await
+    }
     async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
         self.inner.guild_message_count(guild_id, utc_day).await
     }

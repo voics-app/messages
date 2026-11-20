@@ -877,6 +877,7 @@ async fn guild_message_activity_counts_stored_messages_but_marks_coverage_unveri
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["count"], 1);
     assert_eq!(body["coverage_complete"], false);
+    assert!(body["source_initialized_at_ms"].is_null());
 }
 
 #[tokio::test]

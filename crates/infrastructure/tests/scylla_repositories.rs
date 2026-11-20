@@ -67,6 +67,10 @@ async fn scylla_adapters_against_a_real_node() {
 }
 
 async fn guild_activity_markers(repo: &ScyllaMessageRepository, session: &scylla::client::session::Session) {
+    let initialized = repo.guild_activity_source_initialized_ms().await.unwrap();
+    assert!(initialized.is_some());
+    migrate(session, "discordy_it").await.unwrap();
+    assert_eq!(repo.guild_activity_source_initialized_ms().await.unwrap(), initialized);
     let guild = Snowflake::new(777);
     let channel = Snowflake::new(778);
     let before = message(channel, id_at(86_400_000 - 1, 0), "before midnight");

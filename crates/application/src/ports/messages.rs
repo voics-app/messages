@@ -25,6 +25,8 @@ pub trait MessageRepository: Send + Sync {
 
     /// Count retained activity markers for a guild and UTC day (days since Unix epoch).
     async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError>;
+    /// Timestamp of the marker schema migration; this is not proof of fleet coverage.
+    async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError>;
 
     /// Overwrites the mutable fields of an existing message.
     async fn update(&self, message: &Message) -> Result<(), PortError>;

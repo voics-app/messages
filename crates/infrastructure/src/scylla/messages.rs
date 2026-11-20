@@ -17,6 +17,7 @@ pub struct ScyllaMessageRepository {
     insert: PreparedStatement,
     insert_guild: Batch,
     count_guild_activity: PreparedStatement,
+    guild_activity_source_initialized: PreparedStatement,
     advance_last: PreparedStatement,
     update_content: PreparedStatement,
     set_pinned: PreparedStatement,
@@ -67,6 +68,7 @@ impl ScyllaMessageRepository {
             insert,
             insert_guild,
             count_guild_activity: prepare(s, "SELECT count(*) FROM guild_message_activity WHERE guild_id = ? AND utc_day = ?").await?,
+            guild_activity_source_initialized: prepare(s, "SELECT applied_at FROM schema_migrations WHERE version = ?").await?,
             advance_last: prepare(
                 s,
                 "UPDATE channel_last_message USING TIMESTAMP ? SET last_message_id = ? WHERE channel_id = ?",
@@ -113,6 +115,18 @@ impl ScyllaMessageRepository {
 
 #[async_trait]
 impl MessageRepository for ScyllaMessageRepository {
+    async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError> {
+        let rows: Vec<(Option<CqlTimestamp>,)> = fetch_all(
+            &self.session,
+            &self.guild_activity_source_initialized,
+            ("0014_guild_message_activity",),
+        )
+        .await?;
+        rows.first()
+            .and_then(|(at,)| at.as_ref())
+            .map(|at| u64::try_from(at.0).map_err(|_| PortError::new("invalid guild activity source timestamp")))
+            .transpose()
+    }
     async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
         let rows: Vec<(i64,)> = fetch_all(&self.session, &self.count_guild_activity, (id(guild_id), utc_day)).await?;
         let count = rows

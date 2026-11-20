@@ -13,7 +13,9 @@ impl GetGuildMessageActivity {
             messages: ports.messages.clone(),
         }
     }
-    pub async fn execute(&self, guild_id: GuildId, utc_day: i64) -> AppResult<u64> {
-        Ok(self.messages.guild_message_count(guild_id, utc_day).await?)
+    pub async fn execute(&self, guild_id: GuildId, utc_day: i64) -> AppResult<(u64, Option<u64>)> {
+        let count = self.messages.guild_message_count(guild_id, utc_day).await?;
+        let initialized = self.messages.guild_activity_source_initialized_ms().await?;
+        Ok((count, initialized))
     }
 }

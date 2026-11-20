@@ -42,6 +42,9 @@ pub struct InMemoryMessages {
 
 #[async_trait]
 impl MessageRepository for InMemoryMessages {
+    async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError> {
+        Ok(None)
+    }
     async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
         Ok(self
             .guild_activity

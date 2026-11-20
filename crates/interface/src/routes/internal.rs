@@ -193,9 +193,9 @@ pub async fn guild_message_activity(
     if !(0..=100_000).contains(&day) {
         return Err(ApiError::invalid("utc_day", "outside supported range"));
     }
-    let count = state.use_cases.guild_message_activity.execute(guild_id, day).await?;
+    let (count, initialized) = state.use_cases.guild_message_activity.execute(guild_id, day).await?;
     Ok(Json(
-        json!({"utc_day": day, "count": count, "coverage_complete": false}),
+        json!({"utc_day": day, "count": count, "coverage_complete": false, "source_initialized_at_ms": initialized}),
     ))
 }
 
