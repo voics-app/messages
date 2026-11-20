@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use discordy_messages_domain::{ChannelAccess, ChannelId, DomainError, UserId};
+use discordy_messages_domain::{ChannelAccess, ChannelId, DomainError, MessageId, UserId};
 
 use crate::error::{AppError, PortError};
 
@@ -39,4 +39,8 @@ pub trait ChannelAccessProvider: Send + Sync {
     async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
         self.access(channel_id, user_id).await
     }
+
+    /// Idempotently advances a thread's lifecycle activity after its message
+    /// has committed.
+    async fn record_thread_activity(&self, channel_id: ChannelId, message_id: MessageId) -> Result<(), PortError>;
 }

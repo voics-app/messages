@@ -38,7 +38,7 @@ impl ChannelAccess {
         self.guild_id.is_some()
     }
 
-    fn is_thread(&self) -> bool {
+    pub fn is_thread(&self) -> bool {
         THREAD_CHANNEL_TYPES.contains(&self.channel_type)
     }
 

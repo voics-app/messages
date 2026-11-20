@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
 use contracts::{ChannelAccessResponse, ChannelRoutingResponse};
 use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{AccessError, ChannelAccessProvider};
@@ -122,6 +123,32 @@ impl ChannelAccessProvider for HttpChannelAccess {
             status => Err(AccessError::from(port_error(format!(
                 "delivery endpoint returned {status}"
             )))),
+        }
+    }
+
+    async fn record_thread_activity(
+        &self,
+        channel_id: ChannelId,
+        message_id: discordy_messages_domain::MessageId,
+    ) -> Result<(), PortError> {
+        let occurred_at = Utc
+            .timestamp_millis_opt(message_id.unix_millis() as i64)
+            .single()
+            .ok_or_else(|| port_error("message timestamp is out of range"))?;
+        let response = self
+            .api
+            .post(&format!("/internal/v1/threads/{channel_id}/activity"))
+            .json(&serde_json::json!({"occurred_at": occurred_at}))
+            .send()
+            .await
+            .map_err(port_error)?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(port_error(format!(
+                "thread activity endpoint returned {}",
+                response.status()
+            )))
         }
     }
 }

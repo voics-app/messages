@@ -106,6 +106,16 @@ impl MessageRepository for InMemoryMessages {
         Ok(self.last.lock().unwrap().get(&channel_id).copied())
     }
 
+    async fn message_count(&self, channel_id: ChannelId) -> Result<u64, PortError> {
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|(stored_channel, _)| *stored_channel == channel_id)
+            .count() as u64)
+    }
+
     async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError> {
         Ok(self.last.lock().unwrap().iter().map(|(c, m)| (*c, *m)).collect())
     }
@@ -418,6 +428,10 @@ impl ChannelAccessProvider for FakeAccess {
             Some(answer) => answer,
             None => self.access(channel_id, user_id).await,
         }
+    }
+
+    async fn record_thread_activity(&self, _channel_id: ChannelId, _message_id: MessageId) -> Result<(), PortError> {
+        Ok(())
     }
 }
 

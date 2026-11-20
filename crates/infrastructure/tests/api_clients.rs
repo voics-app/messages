@@ -30,6 +30,7 @@ const TOKEN: &str = "stub-internal-token";
 #[derive(Default)]
 struct Calls {
     access: AtomicUsize,
+    activity: AtomicUsize,
     introspect: AtomicUsize,
     users: AtomicUsize,
     private_allowed: AtomicBool,
@@ -101,6 +102,19 @@ async fn delivery(State(calls): State<Stub>, headers: HeaderMap, Path(channel): 
     }
 }
 
+async fn thread_activity(
+    State(calls): State<Stub>,
+    headers: HeaderMap,
+    Path(channel): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    if !authorised(&headers) || channel != "5" || body["occurred_at"].as_str().is_none() {
+        return StatusCode::BAD_REQUEST;
+    }
+    calls.activity.fetch_add(1, Ordering::SeqCst);
+    StatusCode::NO_CONTENT
+}
+
 #[tokio::test]
 async fn channel_lookups_need_no_user() {
     let (api, _) = start_stub().await;
@@ -157,6 +171,7 @@ async fn start_stub() -> (InternalApi, Stub) {
     let app = Router::new()
         .route("/internal/v1/channels/{channel}/access/{user}", get(access))
         .route("/internal/v1/channels/{channel}/delivery", get(delivery))
+        .route("/internal/v1/threads/{channel}/activity", post(thread_activity))
         .route("/internal/v1/auth/introspect", post(introspect))
         .route("/internal/v1/users/lookup", post(users_lookup))
         .with_state(calls.clone());
@@ -202,6 +217,17 @@ async fn access_answers_map_to_domain_values() {
             .unwrap_err(),
         AccessError::Unavailable(_)
     ));
+}
+
+#[tokio::test]
+async fn committed_thread_messages_report_their_snowflake_time() {
+    let (api, calls) = start_stub().await;
+    let provider = HttpChannelAccess::new(api);
+    provider
+        .record_thread_activity(Snowflake::new(5), Snowflake::new(1 << 22))
+        .await
+        .unwrap();
+    assert_eq!(calls.activity.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

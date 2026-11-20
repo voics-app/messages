@@ -231,6 +231,24 @@ impl CreateMessage {
     }
 
     async fn publish_stored(&self, message: &Message, access: &ChannelAccess, nonce: Option<String>) {
+        if access.is_thread() {
+            let mut last_error = None;
+            for delay_ms in [0, 25, 100] {
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                match self.access.record_thread_activity(message.channel_id, message.id).await {
+                    Ok(()) => {
+                        last_error = None;
+                        break;
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            if let Some(error) = last_error {
+                tracing::warn!(message_id = %message.id, channel_id = %message.channel_id, %error, "failed to record thread activity after retries");
+            }
+        }
         self.record_side_effects(message, access.guild_id).await;
         announce(
             self.events.as_ref(),

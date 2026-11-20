@@ -12,6 +12,7 @@ use crate::ports::{
 mod acknowledge_message;
 mod add_reaction;
 mod bulk_delete_messages;
+mod count_messages;
 mod create_message;
 mod create_upload_slots;
 mod delete_message;
@@ -39,6 +40,7 @@ mod update_call;
 pub use acknowledge_message::AcknowledgeMessage;
 pub use add_reaction::AddReaction;
 pub use bulk_delete_messages::BulkDeleteMessages;
+pub use count_messages::CountMessages;
 pub use create_message::{AttachmentReference, CreateMessage, CreateMessageCommand, ForwardSource};
 pub use create_upload_slots::{CreateUploadSlots, UploadRequest};
 pub use delete_message::DeleteMessage;

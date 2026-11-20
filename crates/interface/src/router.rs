@@ -77,6 +77,7 @@ pub fn router(state: AppState) -> Router {
             patch(internal::update_call),
         )
         .route("/channels/{channel_id}/last-message-id", get(internal::last_message_id))
+        .route("/channels/message-counts", post(internal::message_counts))
         .route("/users/{user_id}/read-states", get(internal::read_states))
         .route("/admin/stats", get(internal::admin_stats))
         .route("/search/reindex", post(internal::reindex_search));

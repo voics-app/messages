@@ -35,6 +35,9 @@ pub trait MessageRepository: Send + Sync {
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError>;
 
+    /// Exact number of currently stored messages in a channel.
+    async fn message_count(&self, channel_id: ChannelId) -> Result<u64, PortError>;
+
     /// Every channel that has ever held a message, with its newest message id
     /// (a full scan of a small table: used by the search backfill only).
     async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError>;
