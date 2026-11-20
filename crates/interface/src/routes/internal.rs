@@ -35,15 +35,22 @@ pub async fn create_forum_start(
     _: InternalCaller,
     ApiPath(Id(channel_id)): ApiPath<Id>,
     ApiJson(body): ApiJson<InternalForumStartRequest>,
-) -> Result<Json<MessageDto>, ApiError> {
+) -> Result<Response, ApiError> {
     let author_id = parse_id("author_id", &body.author_id)?;
     let message_id = parse_id("message_id", &body.message_id)?;
-    let view = state
+    let view = match state
         .use_cases
         .create_message
         .execute_forum_start(channel_id, author_id, message_id, body.content)
-        .await?;
-    Ok(Json(single(&state, &view).await))
+        .await
+    {
+        Ok(view) => view,
+        Err(discordy_messages_application::AppError::Domain(discordy_messages_domain::DomainError::UnknownMessage)) => {
+            return Ok((StatusCode::GONE, Json(json!({"status":"deleted"}))).into_response());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Json(single(&state, &view).await).into_response())
 }
 
 pub async fn forum_summaries(

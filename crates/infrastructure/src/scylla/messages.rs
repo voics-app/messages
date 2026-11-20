@@ -5,15 +5,17 @@ use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{BucketQuery, MessageRepository};
 use discordy_messages_domain::{Bucket, ChannelId, Message, MessageId, ScanDirection};
 use scylla::client::session::Session;
-use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::{Consistency, SerialConsistency, batch::Batch, prepared::PreparedStatement};
 use scylla::value::CqlTimestamp;
+use scylla::value::{CqlValue, Row};
 
 use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, attachment_udt, id, snowflake};
-use super::{execute, fetch_all, prepare};
+use super::{execute, fetch_all, port_error, prepare};
 
 pub struct ScyllaMessageRepository {
     session: Arc<Session>,
     insert: PreparedStatement,
+    forum_insert: Batch,
     advance_last: PreparedStatement,
     update_content: PreparedStatement,
     set_pinned: PreparedStatement,
@@ -41,7 +43,20 @@ impl ScyllaMessageRepository {
     pub async fn new(session: Arc<Session>) -> Result<Self, PortError> {
         let s = session.as_ref();
         let select = format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE channel_id = ? AND bucket = ?");
+        let insert_sql = format!(
+            "INSERT INTO messages ({MESSAGE_COLUMNS}) VALUES ({})",
+            vec!["?"; MESSAGE_COLUMN_COUNT].join(", ")
+        );
+        let mut forum_batch = Batch::default();
+        forum_batch.set_consistency(Consistency::Quorum);
+        forum_batch.set_serial_consistency(Some(SerialConsistency::Serial));
+        forum_batch.set_is_idempotent(false);
+        forum_batch.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
+        forum_batch.append_statement(format!("{insert_sql} IF NOT EXISTS"));
+        forum_batch.append_statement(insert_sql);
+        let forum_insert = s.prepare_batch(&forum_batch).await.map_err(port_error)?;
         Ok(Self {
+            forum_insert,
             insert: prepare(
                 s,
                 &format!(
@@ -112,6 +127,48 @@ impl MessageRepository for ScyllaMessageRepository {
         .await
     }
 
+    async fn insert_forum_once(&self, marker: &Message, message: &Message) -> Result<bool, PortError> {
+        if marker.id != marker.channel_id
+            || marker.channel_id != message.channel_id
+            || Bucket::of(marker.id) != Bucket::of(message.id)
+        {
+            return Err(PortError::new("forum marker and message must share a partition"));
+        }
+        let result = self
+            .session
+            .batch(
+                &self.forum_insert,
+                (MessageRow::from_message(marker), MessageRow::from_message(message)),
+            )
+            .await
+            .map_err(port_error)?;
+        let rows = result.into_rows_result().map_err(port_error)?;
+        let mut applied = None;
+        for row in rows.rows::<Row>().map_err(port_error)? {
+            match row.map_err(port_error)?.columns.first() {
+                Some(Some(CqlValue::Boolean(value))) => applied = Some(applied.unwrap_or(true) && *value),
+                _ => return Err(PortError::new("forum conditional write omitted applied status")),
+            }
+        }
+        let applied = applied.ok_or_else(|| PortError::new("forum conditional write returned no status"))?;
+        let timestamp = (message.id.unix_millis() * 1000 + message.id.value() % 1000) as i64;
+        execute(
+            &self.session,
+            &self.advance_last,
+            (timestamp, id(message.id), id(message.channel_id)),
+        )
+        .await?;
+        Ok(applied)
+    }
+
+    async fn forum_marker(
+        &self,
+        channel_id: ChannelId,
+    ) -> Result<Option<(discordy_messages_domain::UserId, MessageId, String)>, PortError> {
+        let rows: Vec<MessageRow> = fetch_all(&self.session, &self.find, Self::key(channel_id, channel_id)).await?;
+        Ok(rows.into_iter().find_map(MessageRow::forum_marker))
+    }
+
     async fn update(&self, message: &Message) -> Result<(), PortError> {
         let (channel, bucket, message_id) = Self::key(message.channel_id, message.id);
         execute(
@@ -152,6 +209,7 @@ impl MessageRepository for ScyllaMessageRepository {
     async fn delete(&self, channel_id: ChannelId, message_ids: &[MessageId]) -> Result<(), PortError> {
         let deletes = message_ids
             .iter()
+            .filter(|message_id| **message_id != channel_id)
             .map(|message_id| execute(&self.session, &self.delete, Self::key(channel_id, *message_id)));
         futures::future::try_join_all(deletes).await.map(|_| ())
     }
@@ -182,7 +240,11 @@ impl MessageRepository for ScyllaMessageRepository {
 
     async fn count_bucket(&self, channel_id: ChannelId, bucket: Bucket) -> Result<u64, PortError> {
         let rows: Vec<(i64,)> = fetch_all(&self.session, &self.count_bucket, (id(channel_id), bucket.value())).await?;
-        Ok(rows.first().map(|row| row.0.max(0) as u64).unwrap_or(0))
+        let mut count = rows.first().map(|row| row.0.max(0) as u64).unwrap_or(0);
+        if bucket == Bucket::of(channel_id) && self.forum_marker(channel_id).await?.is_some() {
+            count = count.saturating_sub(1);
+        }
+        Ok(count)
     }
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {

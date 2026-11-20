@@ -121,7 +121,23 @@ impl MessageRow {
 
     /// `None` for partial rows (an update that raced a delete leaves a row
     /// without an author); such rows are treated as deleted.
+    pub(crate) fn forum_marker(
+        self,
+    ) -> Option<(
+        discordy_messages_domain::UserId,
+        discordy_messages_domain::MessageId,
+        String,
+    )> {
+        if self.flags? as u32 != discordy_messages_domain::FORUM_MARKER_FLAG {
+            return None;
+        }
+        Some((snowflake(self.author_id?), snowflake(self.reply_to?), self.content?))
+    }
+
     pub(crate) fn into_message(self) -> Option<Message> {
+        if self.flags.map(|flags| flags as u32) == Some(discordy_messages_domain::FORUM_MARKER_FLAG) {
+            return None;
+        }
         let author_id = self.author_id?;
         let kind = MessageKind::from_code(self.kind.unwrap_or(0) as u8);
         let call = (kind == MessageKind::Call).then(|| Call {

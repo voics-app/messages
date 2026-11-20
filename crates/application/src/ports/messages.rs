@@ -20,6 +20,18 @@ pub trait MessageRepository: Send + Sync {
     /// Stores a new message and advances the channel's last message id.
     async fn insert(&self, message: &Message) -> Result<(), PortError>;
 
+    /// Atomically stores an opener and its durable marker in the same partition.
+    async fn insert_forum_once(&self, _marker: &Message, _message: &Message) -> Result<bool, PortError> {
+        Err(PortError::new("forum reservation unavailable"))
+    }
+    /// Marker survives deletion of the visible opening message.
+    async fn forum_marker(
+        &self,
+        _channel_id: ChannelId,
+    ) -> Result<Option<(discordy_messages_domain::UserId, MessageId, String)>, PortError> {
+        Err(PortError::new("forum reservation unavailable"))
+    }
+
     /// Overwrites the mutable fields of an existing message.
     async fn update(&self, message: &Message) -> Result<(), PortError>;
 
