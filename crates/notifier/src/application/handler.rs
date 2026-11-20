@@ -192,6 +192,9 @@ impl EventHandler {
             ],
         };
         for token in tokens {
+            if token.only_mentions {
+                continue;
+            }
             if self.dispatcher.submit(token, OutboundPush::Alert(alert.clone())) == Submitted::Dropped {
                 tracing::warn!("scheduled event push queue full");
             }
@@ -475,7 +478,13 @@ mod tests {
         let rig = rig(
             vec![Target {
                 recipient: recipient("2"),
-                tokens: vec![apns("phone", true)],
+                tokens: vec![
+                    apns("phone", true),
+                    DeviceToken {
+                        only_mentions: true,
+                        ..apns("mentions-only", true)
+                    },
+                ],
                 voip_tokens: vec![],
             }],
             "standard",
