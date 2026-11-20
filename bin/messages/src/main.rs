@@ -3,6 +3,7 @@
 
 mod config;
 mod probes;
+mod scheduled;
 mod telemetry;
 
 use std::process::ExitCode;
@@ -13,7 +14,9 @@ use config::{Config, Environment};
 use discordy_messages_application::ports::{BackfillState, SearchIndex};
 use discordy_messages_application::use_cases::{MessagingPorts, PurgeAuthorMessages};
 use discordy_messages_application::{HistoryReader, PortError};
-use discordy_messages_infrastructure::api::{HttpChannelAccess, HttpUserDirectory, InternalApi, TokenAuthenticator};
+use discordy_messages_infrastructure::api::{
+    HttpChannelAccess, HttpNotificationRecipients, HttpUserDirectory, InternalApi, TokenAuthenticator,
+};
 use discordy_messages_infrastructure::ban_purge;
 use discordy_messages_infrastructure::kafka::KafkaEventSink;
 use discordy_messages_infrastructure::scylla::{
@@ -26,7 +29,7 @@ use discordy_messages_infrastructure::system::{SnowflakeIds, SystemClock};
 use discordy_messages_infrastructure::unfurl::{HttpLinkUnfurler, HttpMediaFetcher, SafeHttp, SsrfPolicy};
 use discordy_messages_interface::cors::{self, InvalidOrigin};
 use discordy_messages_interface::{AppState, AttachmentUrls, EnvelopePublisher, InternalToken, ReadinessCheck, router};
-use probes::{KafkaProbe, ScyllaProbe};
+use probes::{IdProbe, KafkaProbe, ReadStateProbe, ScyllaProbe};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -88,6 +91,8 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     let session = scylla::connect(&config.scylla_nodes, &config.scylla_keyspace).await?;
     let messages = Arc::new(ScyllaMessageRepository::new(session.clone()).await?);
     let reactions = Arc::new(ScyllaReactionRepository::new(session.clone()).await?);
+    let read_states =
+        Arc::new(ScyllaReadStateRepository::open(session.clone(), config.scylla_read_state_keyspace.as_deref()).await?);
     let kafka = Arc::new(KafkaEventSink::connect(config.kafka_brokers.clone()).await?);
 
     let storage = S3AttachmentStorage::new(
@@ -105,6 +110,7 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     }
 
     let api = InternalApi::new(http, &config.api_internal_url, config.internal_service_token.clone());
+    let ids = SnowflakeIds::start(api.clone(), config.worker).await?;
     let authenticator = Arc::new(TokenAuthenticator::new(&config.jwt_public_key, api.clone())?);
     let clock = Arc::new(SystemClock);
     let urls = AttachmentUrls::new(
@@ -135,11 +141,12 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     )?;
     let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
+        notification_recipients: Arc::new(HttpNotificationRecipients(api.clone())),
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
         reactions: reactions.clone(),
         pins: Arc::new(ScyllaPinRepository::new(session.clone()).await?),
-        read_states: Arc::new(ScyllaReadStateRepository::new(session.clone()).await?),
+        read_states: read_states.clone(),
         activity: Arc::new(ScyllaActivityRepository::new(session.clone()).await?),
         storage: Arc::new(storage),
         events: Arc::new(EnvelopePublisher::new(
@@ -148,15 +155,27 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
             urls.clone(),
             users.clone(),
         )),
-        ids: Arc::new(SnowflakeIds::new(config.worker)),
+        ids: ids.clone(),
         clock,
         history: Arc::new(HistoryReader::new(messages, reactions)),
         users,
         search: search_index.clone(),
         unfurler: Arc::new(HttpLinkUnfurler::new(outbound)),
     };
-    let probes: Vec<Arc<dyn ReadinessCheck>> = vec![Arc::new(ScyllaProbe(session)), Arc::new(KafkaProbe(kafka))];
-    let state = AppState::new(
+    let scheduler = scheduled::Scheduler::start(&config, session.clone(), &ports).await?;
+    let mut probes: Vec<Arc<dyn ReadinessCheck>> = vec![
+        Arc::new(ScyllaProbe(session)),
+        Arc::new(ReadStateProbe(read_states)),
+        Arc::new(KafkaProbe(kafka)),
+        Arc::new(IdProbe(ids)),
+    ];
+    if let Some(scheduler) = &scheduler {
+        probes.push(Arc::new(probes::ScheduledProbe {
+            repository: scheduler.repository.clone(),
+            running: scheduler.running.clone(),
+        }));
+    }
+    let mut state = AppState::new(
         &ports,
         authenticator,
         InternalToken::new(&config.internal_service_token),
@@ -165,6 +184,9 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         probes,
         metrics,
     );
+    if let Some(scheduler) = &scheduler {
+        state = state.with_scheduled(scheduler.service.clone());
+    }
 
     if let Some(pg) = pg_index {
         tokio::spawn(run_search(
@@ -189,6 +211,9 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     axum::serve(listener, router(state).layer(cors))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    if let Some(scheduler) = scheduler {
+        scheduler.shutdown().await;
+    }
     tracing::info!("messages service stopped gracefully");
     Ok(())
 }

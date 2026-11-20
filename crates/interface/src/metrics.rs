@@ -89,6 +89,7 @@ mod tests {
         record_message_event(&MessageEventKind::Acknowledged {
             message_id: Snowflake::new(1),
             mention_count: 0,
+            version: 1,
         });
         let text = handle.render();
         assert!(text.contains("messages_deleted_total 3"), "{text}");

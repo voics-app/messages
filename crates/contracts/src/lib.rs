@@ -8,6 +8,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod notification_recipients;
+pub use notification_recipients::{NotificationRecipientDto, NotificationRecipientPageDto};
+
+#[rustfmt::skip]
+#[allow(clippy::all)]
+#[path = "scheduled/types.rs"]
+pub mod scheduled;
+
 /// The event-bus topic this service produces to (P6).
 pub const MESSAGE_TOPIC: &str = "discordy.message.v1";
 /// The guild topic this service only consumes (bus-only BAN_MESSAGE_PURGE).
@@ -26,6 +34,7 @@ pub mod event_type {
     pub const MESSAGE_REACTION_REMOVE_ALL: &str = "MESSAGE_REACTION_REMOVE_ALL";
     pub const CHANNEL_PINS_UPDATE: &str = "CHANNEL_PINS_UPDATE";
     pub const MESSAGE_ACK: &str = "MESSAGE_ACK";
+    pub const READ_STATE_UPDATE: &str = "READ_STATE_UPDATE";
     /// Consumed from [`super::GUILD_TOPIC`]: purge a banned user's recent messages.
     pub const BAN_MESSAGE_PURGE: &str = "BAN_MESSAGE_PURGE";
 }
@@ -250,7 +259,7 @@ pub struct AttachmentDto {
     pub height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
-    /// `AttachmentFlags` bit set; omitted when zero.
+    /// `AttachmentFlags` bit set; explicit zero overrides a SPOILER_ filename.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub flags: Option<u32>,
 }
@@ -273,6 +282,8 @@ pub struct ReactionDto {
 pub struct CreateMessageRequest {
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub tts: bool,
     #[serde(default)]
     pub nonce: Option<Value>,
     #[serde(default)]
@@ -344,6 +355,28 @@ pub struct EditMessageRequest {
     /// Only SUPPRESS_EMBEDS (4) is honoured.
     #[serde(default)]
     pub flags: Option<u32>,
+    #[serde(default)]
+    pub attachments: Option<Vec<AttachmentMetadataEditDto>>,
+}
+
+/// Partial metadata changes for one existing attachment. Files cannot be replaced here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachmentMetadataEditDto {
+    pub id: String,
+    /// Missing retains alt text; null clears it.
+    #[serde(
+        default,
+        deserialize_with = "present_description",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<u32>,
+}
+
+fn present_description<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 /// `POST /channels/{id}/messages/bulk-delete`.
@@ -437,6 +470,8 @@ pub struct ChannelRoutingResponse {
 pub struct InternalCreateMessageRequest {
     pub author_id: String,
     #[serde(default)]
+    pub tts: bool,
+    #[serde(default)]
     pub webhook_id: Option<String>,
     #[serde(default)]
     pub username: Option<String>,
@@ -520,6 +555,7 @@ pub struct ReadStateDto {
     pub id: String,
     pub last_message_id: Option<String>,
     pub mention_count: u32,
+    pub read_state_version: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +633,15 @@ pub struct MessageAckData {
     pub channel_id: String,
     pub message_id: String,
     pub mention_count: u32,
+    pub read_state_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadStateUpdateData {
+    pub channel_id: String,
+    pub last_message_id: Option<String>,
+    pub mention_count: u32,
+    pub read_state_version: String,
 }
 
 /// Optional body of `POST /channels/{id}/messages/{mid}/ack`.

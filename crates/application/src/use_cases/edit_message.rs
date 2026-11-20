@@ -47,7 +47,7 @@ impl EditMessage {
             access.ensure_can_suppress_embeds(editor, message.author_id)?;
             message.set_embeds_suppressed(suppressed);
         }
-        let reunfurl = edit.changes_body() || suppress == Some(false);
+        let reunfurl = edit.content.is_some() || edit.embeds.is_some() || suppress == Some(false);
         if edit.changes_body() {
             let may_mention = access.may_mention_everyone();
             message.apply_edit(editor, edit, may_mention, self.clock.now_unix_ms())?;
@@ -85,6 +85,7 @@ mod tests {
         MessageEdit {
             content: Some(content.to_owned()),
             embeds: None,
+            attachments: None,
             flags: None,
         }
     }

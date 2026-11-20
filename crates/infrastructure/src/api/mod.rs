@@ -2,10 +2,13 @@
 
 mod authenticator;
 mod channel_access;
+mod id_reservations;
+mod notification_recipients;
 mod users;
 
 pub use authenticator::TokenAuthenticator;
 pub use channel_access::HttpChannelAccess;
+pub use notification_recipients::HttpNotificationRecipients;
 pub use users::HttpUserDirectory;
 
 use discordy_messages_application::PortError;

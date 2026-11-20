@@ -141,6 +141,153 @@ fn messages_uri() -> String {
 }
 
 #[tokio::test]
+async fn tts_is_persisted_returned_and_gated_by_permission() {
+    let harness = Harness::new();
+    harness.access.set_permissions(MEMBER | (1 << 12));
+    let app = app(&harness);
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "read this aloud", "tts": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["tts"], true);
+    assert!(matches!(&harness.events.kinds()[0],
+        discordy_messages_application::ports::MessageEventKind::Created { message, .. } if message.tts));
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["tts"], true);
+
+    harness.access.set_permissions(MEMBER);
+    let (status, denied) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "not permitted", "tts": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    let (_, normal) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "normal message"})),
+    )
+    .await;
+    assert_eq!(normal["tts"], false);
+}
+
+#[tokio::test]
+async fn attachment_metadata_edits_preserve_files_and_can_clear_a_spoiler() {
+    let harness = Harness::new();
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/77/SPOILER_cat.png"), b"meow");
+    let app = app(&harness);
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content": "look", "attachments": [{
+            "uploaded_filename": format!("attachments/{CHANNEL}/77/SPOILER_cat.png"),
+            "description": "old alt text"
+        }]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = format!("{}/{}", messages_uri(), created["id"].as_str().unwrap());
+    let (status, edited) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"id": "77", "description": " a sleeping cat ", "flags": 0}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(edited["attachments"][0]["description"], "a sleeping cat");
+    assert_eq!(edited["attachments"][0]["flags"], 0);
+    assert_eq!(edited["attachments"][0]["url"], created["attachments"][0]["url"]);
+    assert!(edited["edited_timestamp"].is_string());
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["attachments"], edited["attachments"]);
+    let (_, cleared) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"id": "77", "description": null, "flags": 8}]})),
+    )
+    .await;
+    assert!(cleared["attachments"][0]["description"].is_null());
+    assert_eq!(cleared["attachments"][0]["flags"], 8);
+    assert!(matches!(&harness.events.kinds().last().unwrap(),
+        discordy_messages_application::ports::MessageEventKind::Updated { message }
+        if message.attachments[0].description.is_none() && message.attachments[0].flags == 8));
+    for invalid in [
+        json!({"attachments": [{"id": "77", "filename": "replacement.png"}]}),
+        json!({"content": "must not change", "attachments": [{"id": "999", "description": "unknown"}]}),
+        json!({"attachments": [{"id": "77", "flags": 0}, {"id": "77", "flags": 8}]}),
+    ] {
+        let (status, _) = call(&app, Method::PATCH, &uri, Some(ALICE_TOKEN), Some(invalid)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (_, unchanged) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(unchanged[0]["content"], "look");
+    assert_eq!(unchanged[0]["attachments"], cleared["attachments"]);
+    let (status, _) = call(
+        &app,
+        Method::PATCH,
+        &uri,
+        Some("Bearer bob"),
+        Some(json!({"attachments": [{"id": "77", "flags": 0}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn expired_id_issuer_returns_503_without_storing_or_announcing() {
+    struct Expired;
+    impl discordy_messages_application::ports::IdGenerator for Expired {
+        fn next_id(&self) -> Result<discordy_messages_domain::Snowflake, PortError> {
+            Err(PortError::new("ID reservation expired"))
+        }
+        fn is_ready(&self) -> bool {
+            false
+        }
+    }
+    let mut harness = Harness::new();
+    harness.ports.ids = Arc::new(Expired);
+    let app = app(&harness);
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"content":"hello"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(harness.messages.last_message_id(CHANNEL).await.unwrap(), None);
+    assert!(harness.events.kinds().is_empty());
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/api/v1/channels/{CHANNEL}/attachments"),
+        Some(ALICE_TOKEN),
+        Some(json!({"files":[{"id":"0","filename":"image.png","file_size":1}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+}
+
+#[tokio::test]
 async fn requests_without_valid_credentials_are_rejected() {
     let harness = Harness::new();
     let app = app(&harness);
@@ -367,6 +514,68 @@ async fn upload_slots_point_at_the_attachment_store() {
     assert_eq!(slot["id"], "3");
     assert!(slot["upload_filename"].as_str().unwrap().ends_with("/cat.png"));
     assert!(slot["upload_url"].is_string());
+}
+
+#[tokio::test]
+async fn older_ack_preserves_versioned_mentions_in_dispatch_and_internal_reads() {
+    use discordy_messages_application::ports::MessageEventKind;
+    let harness = Harness::new();
+    let app = app(&harness);
+    let mut first = String::new();
+    for index in 0..2 {
+        let (status, message) = call(
+            &app,
+            Method::POST,
+            &messages_uri(),
+            Some(ALICE_TOKEN),
+            Some(json!({"content": format!("mention {index} <@{BOB}>")})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        if index == 0 {
+            first = message["id"].as_str().unwrap().to_owned();
+        }
+    }
+    let ack_uri = format!("{}/{first}/ack", messages_uri());
+    for _ in 0..2 {
+        let (status, _) = call(&app, Method::POST, &ack_uri, Some("Bearer bob"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let event = harness.events.events.lock().unwrap().last().unwrap().clone();
+        assert_eq!(event.audience, Audience::Users(vec![BOB]));
+        assert!(matches!(
+            event.kind,
+            MessageEventKind::Acknowledged {
+                mention_count: 1,
+                version: 3,
+                ..
+            }
+        ));
+    }
+    let request = Request::builder()
+        .uri(format!("/internal/v1/users/{BOB}/read-states"))
+        .header("x-internal-token", INTERNAL)
+        .body(Body::empty())
+        .unwrap();
+    let (status, reads) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reads[0]["last_message_id"], first);
+    assert_eq!(reads[0]["mention_count"], 1);
+    assert_eq!(reads[0]["read_state_version"], "3");
+}
+
+#[tokio::test]
+async fn internal_read_state_header_certifies_an_empty_account() {
+    let harness = Harness::new();
+    let request = Request::builder()
+        .uri(format!("/internal/v1/users/{BOB}/read-states"))
+        .header("x-internal-token", INTERNAL)
+        .body(Body::empty())
+        .unwrap();
+    let response = app(&harness).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-read-state-versioned"], "1");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!([]));
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! Composition root of the notifier: configuration, wiring, probes and shutdown.
 
 mod config;
+mod manual;
 
 use std::error::Error;
 use std::sync::Arc;
@@ -9,9 +10,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{get, post};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use notifier::application::{DispatchConfig, Dispatcher, EventDeliveryWorker, EventHandler, HandlerConfig, PushSender};
+use notifier::application::{
+    DispatchConfig, Dispatcher, EventDeliveryWorker, EventHandler, HandlerConfig, ManualPush, PushSender,
+};
 use notifier::infrastructure::api_client::ApiClient;
 use notifier::infrastructure::apns::{ApnsConfig, ApnsSender};
 use notifier::infrastructure::fcm::{FcmConfig, FcmSender};
@@ -109,6 +112,10 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         sender,
         api.clone(),
     );
+    let manual = manual::ManualState {
+        push: Arc::new(ManualPush::new(api.clone(), dispatcher.clone())),
+        internal_token: Arc::from(config.internal_service_token.as_str()),
+    };
     let handler = Arc::new(EventHandler::new(
         api,
         dispatcher,
@@ -125,7 +132,12 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         .route("/healthz", get(live))
         .route("/readyz", get(ready))
         .route("/metrics", get(scrape))
-        .with_state(ProbeState { topic, metrics });
+        .with_state(ProbeState { topic, metrics })
+        .merge(
+            Router::new()
+                .route("/internal/v1/manual-push", post(manual::manual_push))
+                .with_state(manual),
+        );
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, "notifier listening");
     axum::serve(listener, app)

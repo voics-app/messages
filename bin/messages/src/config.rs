@@ -29,6 +29,10 @@ pub struct Config {
     pub kafka_brokers: Vec<String>,
     pub scylla_nodes: Vec<String>,
     pub scylla_keyspace: String,
+    /// Separate vnode keyspace for atomic read state; defaults to <main>_reads.
+    pub scylla_read_state_keyspace: Option<String>,
+    pub scheduled_messages_enabled: bool,
+    pub scylla_scheduled_message_keyspace: Option<String>,
     pub api_internal_url: String,
     pub minio_endpoint: String,
     pub minio_access_key: String,
@@ -84,6 +88,9 @@ impl Config {
             kafka_brokers: reader.list("KAFKA_BROKERS"),
             scylla_nodes: reader.list("SCYLLA_NODES"),
             scylla_keyspace: reader.optional("SCYLLA_KEYSPACE", "discordy"),
+            scylla_read_state_keyspace: reader.value("SCYLLA_READ_STATE_KEYSPACE"),
+            scheduled_messages_enabled: reader.flag("SCHEDULED_MESSAGES_ENABLED", false),
+            scylla_scheduled_message_keyspace: reader.optional_identifier("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE"),
             api_internal_url: reader.url("API_INTERNAL_URL"),
             minio_endpoint: reader.url("MINIO_ENDPOINT"),
             minio_access_key: reader.required("MINIO_ACCESS_KEY"),
@@ -110,6 +117,18 @@ struct Reader<F> {
 }
 
 impl<F: Fn(&str) -> Option<String>> Reader<F> {
+    fn optional_identifier(&mut self, name: &str) -> Option<String> {
+        let value = self.value(name)?;
+        if value.len() > 48
+            || value.starts_with(|c: char| c.is_ascii_digit())
+            || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            self.problem(format!(
+                "{name} must be an identifier of at most 48 letters, digits or underscores"
+            ));
+        }
+        Some(value)
+    }
     fn problem(&mut self, message: String) {
         self.problems.push(message);
     }
@@ -260,6 +279,26 @@ mod tests {
         assert_eq!(config.bind_addr.port(), 8082);
         assert_eq!(config.kafka_brokers, vec!["a:9092", "b:9092"]);
         assert!(config.jwt_public_key.contains('\n'));
+        assert!(!config.scheduled_messages_enabled);
+        assert!(config.scylla_scheduled_message_keyspace.is_none());
+    }
+
+    #[test]
+    fn scheduling_requires_explicit_enablement_and_validates_its_optional_keyspace() {
+        let mut vars = complete();
+        vars.insert("SCHEDULED_MESSAGES_ENABLED", "true");
+        vars.insert("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE", "messages_scheduled");
+        let config = load(&vars).unwrap();
+        assert!(config.scheduled_messages_enabled);
+        assert_eq!(
+            config.scylla_scheduled_message_keyspace.as_deref(),
+            Some("messages_scheduled")
+        );
+        vars.insert("SCHEDULED_MESSAGES_ENABLED", "maybe");
+        vars.insert("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE", "bad; DROP KEYSPACE x");
+        let error = load(&vars).err().unwrap().to_string();
+        assert!(error.contains("SCHEDULED_MESSAGES_ENABLED"));
+        assert!(error.contains("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE"));
     }
 
     #[test]

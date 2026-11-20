@@ -26,5 +26,12 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+[dev-dependencies]
+discordy-messages-application = { workspace = true, features = ["test-support"] }
+scylla = "1"
+testcontainers = "0.28"
+serde_json.workspace = true
+time.workspace = true
+
 [lints]
 workspace = true

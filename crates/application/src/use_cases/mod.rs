@@ -25,6 +25,7 @@ mod list_read_states;
 mod pin_message;
 mod purge_author_messages;
 mod reaction_moderation;
+mod record_mentions;
 mod refresh_attachment_urls;
 mod reindex_search;
 mod remove_all_reactions;
@@ -68,6 +69,7 @@ pub struct MessagingPorts {
     pub reactions: Arc<dyn ReactionRepository>,
     pub pins: Arc<dyn PinRepository>,
     pub read_states: Arc<dyn ReadStateRepository>,
+    pub notification_recipients: Arc<dyn crate::ports::NotificationRecipients>,
     pub activity: Arc<dyn ActivityRepository>,
     pub storage: Arc<dyn AttachmentStorage>,
     pub events: Arc<dyn EventPublisher>,

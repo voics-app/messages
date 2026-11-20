@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::application::{
-    ChannelTargets, DeviceToken, Environment, EventDelivery, EventDeliveryDirectory, Platform, PortError, Target,
-    TargetDirectory, TokenRegistry,
+    ChannelTargets, DeviceDirectory, DevicePage, DeviceToken, Environment, EventDelivery, EventDeliveryDirectory,
+    Platform, PortError, Target, TargetDirectory, TokenRegistry,
 };
 use crate::domain::{ChannelContext, Level, Recipient};
 
@@ -229,6 +229,68 @@ impl TargetDirectory for ApiClient {
     }
 }
 
+#[derive(Deserialize)]
+struct ManualBody {
+    users: Vec<ManualUserBody>,
+    next_after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ManualUserBody {
+    tokens: Vec<TokenBody>,
+}
+
+impl ManualBody {
+    fn into_page(self) -> DevicePage {
+        DevicePage {
+            devices: self
+                .users
+                .into_iter()
+                .flat_map(|user| user.tokens)
+                .filter_map(TokenBody::into_token)
+                .collect(),
+            next_after: self.next_after,
+        }
+    }
+}
+
+impl ApiClient {
+    async fn manual(&self, path: &str, query: &[(&str, &str)]) -> Result<DevicePage, PortError> {
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .query(query)
+            .header("x-internal-token", &self.internal_token)
+            .send()
+            .await
+            .map_err(|error| PortError::new(format!("api: {error}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(PortError::new(format!("api answered {status} for {path}")));
+        }
+        let body: ManualBody = response
+            .json()
+            .await
+            .map_err(|error| PortError::new(format!("api: {error}")))?;
+        Ok(body.into_page())
+    }
+}
+
+#[async_trait]
+impl DeviceDirectory for ApiClient {
+    async fn user_devices(&self, user_id: &str) -> Result<Vec<DeviceToken>, PortError> {
+        Ok(self
+            .manual(&format!("/internal/v1/users/{user_id}/push-tokens"), &[])
+            .await?
+            .devices)
+    }
+
+    async fn device_page(&self, after: Option<&str>) -> Result<DevicePage, PortError> {
+        let query: Vec<(&str, &str)> = after.map(|a| ("after", a)).into_iter().collect();
+        self.manual("/internal/v1/push-tokens", &query).await
+    }
+}
+
 #[async_trait]
 impl TokenRegistry for ApiClient {
     async fn forget(&self, token: &DeviceToken) -> Result<(), PortError> {
@@ -358,6 +420,41 @@ mod tests {
         };
         client.forget(&token).await.unwrap();
         assert_eq!(log.0.lock().unwrap()[0], r#"DELETE {"platform":"apns","token":"abc"}"#);
+    }
+
+    #[tokio::test]
+    async fn manual_push_devices_are_read_from_the_internal_endpoints() {
+        async fn user(headers: HeaderMap, Path(id): Path<String>) -> axum::Json<Value> {
+            assert_eq!(headers["x-internal-token"], "secret");
+            assert_eq!(id, "42");
+            axum::Json(json!({"users": [{"user_id": "42", "tokens": [
+                {"platform": "fcm", "token": "f1", "environment": "production", "previews": true, "only_mentions": false},
+                {"platform": "wns", "token": "x", "environment": "production", "previews": true, "only_mentions": false}
+            ]}], "next_after": null}))
+        }
+        async fn page(Query(query): Query<std::collections::HashMap<String, String>>) -> axum::Json<Value> {
+            match query.get("after").map(String::as_str) {
+                None => axum::Json(json!({"users": [{"user_id": "1", "tokens": [
+                    {"platform": "apns", "token": "a1", "environment": "sandbox", "previews": true, "only_mentions": false}
+                ]}], "next_after": "1"})),
+                _ => axum::Json(json!({"users": [], "next_after": null})),
+            }
+        }
+        let app = Router::new()
+            .route("/internal/v1/users/{id}/push-tokens", get(user))
+            .route("/internal/v1/push-tokens", get(page));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ApiClient::new(&url, "secret".into()).unwrap();
+
+        let devices = client.user_devices("42").await.unwrap();
+        assert_eq!(devices.len(), 1, "a platform this version does not know is left out");
+        assert_eq!(devices[0].token, "f1");
+        let first = client.device_page(None).await.unwrap();
+        assert_eq!((first.devices.len(), first.next_after.as_deref()), (1, Some("1")));
+        let last = client.device_page(Some("1")).await.unwrap();
+        assert_eq!((last.devices.len(), last.next_after), (0, None));
     }
 
     #[tokio::test]

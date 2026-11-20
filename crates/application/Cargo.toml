@@ -12,6 +12,7 @@ discordy-messages-domain.workspace = true
 async-trait.workspace = true
 bytes = "1"
 serde_json.workspace = true
+sha2 = "0.10"
 dashmap.workspace = true
 futures.workspace = true
 thiserror.workspace = true

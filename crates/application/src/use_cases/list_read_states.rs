@@ -31,8 +31,14 @@ mod tests {
     #[tokio::test]
     async fn lists_only_the_users_states() {
         let h = Harness::new();
-        h.read_states.save(&ReadState::unread(ALICE, CHANNEL)).await.unwrap();
-        h.read_states.save(&ReadState::unread(BOB, CHANNEL)).await.unwrap();
+        h.read_states
+            .acknowledge(ALICE, CHANNEL, Snowflake::new(1))
+            .await
+            .unwrap();
+        h.read_states
+            .acknowledge(BOB, CHANNEL, Snowflake::new(1))
+            .await
+            .unwrap();
         let states = ListReadStates::new(&h.ports).execute(BOB).await.unwrap();
         assert_eq!(states.len(), 1);
         assert_eq!(states[0].user_id, BOB);

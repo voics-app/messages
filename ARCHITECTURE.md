@@ -45,6 +45,14 @@ C4Component
 
 ## Decisions
 
+- **Read accounting.** Per-message ledger, generation contributions and versioned metadata share
+  a user/channel partition in a companion vnode keyspace on the existing Scylla cluster. LWT
+  batches serialize mention/ACK/manual-unread changes; the original table remains discovery and
+  legacy baseline. Current permitted recipients come from API independently of push tokens.
+  The [migration and recovery requirements](docs/read-accounting.md) prohibit mixed old/new
+  writers and require paired-keyspace backups. Message storage and accounting remain separate
+  best-effort operations.
+
 - **Bucketed partitions.** Messages are keyed by `(channel_id, 10-day bucket)`. Paging walks
   buckets backwards from the channel's last message until the page is full or the creation
   bucket is reached.
@@ -80,4 +88,4 @@ C4Component
 
 ## Notifier
 
-`crates/notifier` is a library with its own layers (`domain`: decision rules and push text, no IO; `application`: ports, `EventHandler`, the bounded `Dispatcher`; `infrastructure`: APNs, the api client, the Redpanda consumer) and `bin/notifier` is its composition root. It shares only `contracts` with the messages service and ships as a separate image. Who gets a push is decided by `domain::decide` from the facts the api resolves (effective level, mute, role ids, live session), so the rules sit next to the client rules they mirror. What a push says is decided by `domain::compose`, which is fail-closed: only the delivery mode `standard` may show text. The only event besides a new message that produces a push is a DM call starting (the call system message), which becomes a PushKit `Voip` push through `EventHandler::ring` and `domain::compose_call`, under the same allow-list for names. See the README for back-pressure and the single-replica constraint.
+`crates/notifier` is a library with its own layers (`domain`: decision rules and push text, no IO; `application`: ports, `EventHandler`, the bounded `Dispatcher`; `infrastructure`: APNs, the api client, the Redpanda consumer) and `bin/notifier` is its composition root. It shares only `contracts` with the messages service and ships as a separate image. Who gets a push is decided by `domain::decide` from the facts the api resolves (effective level, mute, role ids, live session), so the rules sit next to the client rules they mirror. What a push says is decided by `domain::compose`, which is fail-closed: only the delivery mode `standard` may show text. The only event besides a new message that produces a push is a DM call starting (the call system message), which becomes a PushKit `Voip` push through `EventHandler::ring` and `domain::compose_call`, under the same allow-list for names. A notification written by hand in the admin portal enters through `application::ManualPush` (behind `POST /internal/v1/manual-push` in `bin/notifier`): it validates the text, resolves devices through the `DeviceDirectory` port (api client) and submits them to the same `Dispatcher`, waiting for queue room instead of bypassing the bound. See the README for back-pressure and the single-replica constraint.

@@ -48,6 +48,15 @@ impl Dispatcher {
     /// Starts the pump on the current tokio runtime.
     pub fn spawn(config: DispatchConfig, sender: Arc<dyn PushSender>, registry: Arc<dyn TokenRegistry>) -> Self {
         let (queue, jobs) = mpsc::channel(config.queue_capacity.max(1));
+        metrics::gauge!("notifier_queue_depth").set(0.0);
+        metrics::gauge!("notifier_queue_capacity").set(config.queue_capacity.max(1) as f64);
+        metrics::gauge!("notifier_in_flight").set(0.0);
+        metrics::gauge!("notifier_in_flight_limit").set(config.max_in_flight.max(1) as f64);
+        for provider in ["apns", "fcm"] {
+            for label in ["sent", "invalid_token", "failed", "dropped", "unsupported", "manual"] {
+                metrics::counter!("notifier_pushes_total", "provider" => provider, "outcome" => label).increment(0);
+            }
+        }
         tokio::spawn(pump(config, jobs, sender, registry));
         Self { queue }
     }
@@ -67,6 +76,25 @@ impl Dispatcher {
     }
 }
 
+impl Dispatcher {
+    /// Like `submit` for pushes a person asked for: waits up to `patience` for room in the queue
+    /// instead of dropping at once, so a broadcast larger than the queue is paced by the same
+    /// bounded queue and in-flight cap, never around them.
+    pub async fn submit_waiting(&self, token: DeviceToken, push: OutboundPush, patience: Duration) -> Submitted {
+        let provider = token.platform.label();
+        match tokio::time::timeout(patience, self.queue.send(Job { token, push })).await {
+            Ok(Ok(())) => {
+                metrics::gauge!("notifier_queue_depth").set((self.queue.max_capacity() - self.queue.capacity()) as f64);
+                Submitted::Queued
+            }
+            _ => {
+                metrics::counter!("notifier_pushes_total", "provider" => provider, "outcome" => "dropped").increment(1);
+                Submitted::Dropped
+            }
+        }
+    }
+}
+
 async fn pump(
     config: DispatchConfig,
     mut jobs: mpsc::Receiver<Job>,
@@ -74,17 +102,40 @@ async fn pump(
     registry: Arc<dyn TokenRegistry>,
 ) {
     let slots = Arc::new(Semaphore::new(config.max_in_flight.max(1)));
-    while let Some(job) = jobs.recv().await {
+    loop {
+        // Demand comes first: removing a job before this await creates an uncounted extra buffer slot.
         let Ok(slot) = Arc::clone(&slots).acquire_owned().await else {
+            return;
+        };
+        let Some(job) = jobs.recv().await else {
             return;
         };
         metrics::gauge!("notifier_queue_depth").set(jobs.len() as f64);
         let sender = Arc::clone(&sender);
         let registry = Arc::clone(&registry);
         tokio::spawn(async move {
+            let in_flight = InFlight::start();
             deliver(config, job, sender.as_ref(), registry.as_ref()).await;
+            drop(in_flight);
             drop(slot);
         });
+    }
+}
+
+/// Includes retry waits and unwinds on cancellation/panic, just like the owned provider permit.
+struct InFlight(metrics::Gauge);
+
+impl InFlight {
+    fn start() -> Self {
+        let gauge = metrics::gauge!("notifier_in_flight");
+        gauge.increment(1.0);
+        Self(gauge)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.decrement(1.0);
     }
 }
 
@@ -156,6 +207,7 @@ mod tests {
     struct FakeSender {
         script: Mutex<VecDeque<Result<(), SendError>>>,
         gate: Option<Arc<Notify>>,
+        permits: Option<Arc<Semaphore>>,
         work: Duration,
         in_flight: AtomicUsize,
         max_in_flight: AtomicUsize,
@@ -168,6 +220,9 @@ mod tests {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_in_flight.fetch_max(now, Ordering::SeqCst);
+            if let Some(permits) = &self.permits {
+                permits.acquire().await.unwrap().forget();
+            }
             if let Some(gate) = &self.gate {
                 gate.notified().await;
             }
@@ -270,6 +325,89 @@ mod tests {
             sender.attempts.load(Ordering::SeqCst),
             2,
             "only the queued jobs were sent"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_provider_does_not_create_an_extra_waiting_slot() {
+        let sender = Arc::new(FakeSender {
+            gate: Some(Arc::new(Notify::new())),
+            ..FakeSender::default()
+        });
+        let bounded = DispatchConfig {
+            queue_capacity: 2,
+            max_in_flight: 1,
+            ..config()
+        };
+        let dispatcher = Dispatcher::spawn(bounded, sender.clone(), Arc::new(FakeRegistry::default()));
+        assert_eq!(dispatcher.submit(token("active"), push()), Submitted::Queued);
+        settle().await;
+        assert_eq!(sender.in_flight.load(Ordering::SeqCst), 1);
+        assert_eq!(dispatcher.submit(token("waiting-1"), push()), Submitted::Queued);
+        settle().await; // Give the pump a chance to remove work while the only provider slot is occupied.
+        assert_eq!(dispatcher.submit(token("waiting-2"), push()), Submitted::Queued);
+        assert_eq!(dispatcher.submit(token("over-capacity"), push()), Submitted::Dropped);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ten_times_capacity_burst_is_bounded_and_reports_drops() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let permits = Arc::new(Semaphore::new(0));
+        let sender = Arc::new(FakeSender {
+            permits: Some(permits.clone()),
+            ..FakeSender::default()
+        });
+        // Engineering baseline: the shipped 10,000-job buffer, not an inferred traffic forecast.
+        let bounded = DispatchConfig {
+            queue_capacity: 10_000,
+            max_in_flight: 100,
+            ..config()
+        };
+        let dispatcher = Dispatcher::spawn(bounded, sender.clone(), Arc::new(FakeRegistry::default()));
+        for _ in 0..bounded.max_in_flight {
+            assert_eq!(dispatcher.submit(token("active"), push()), Submitted::Queued);
+        }
+        settle().await;
+        assert_eq!(sender.in_flight.load(Ordering::SeqCst), bounded.max_in_flight);
+        let mut queued = 0;
+        let mut dropped = 0;
+        for n in 0..10 * bounded.queue_capacity {
+            let mut device = token(&format!("burst-{n}"));
+            if n % 2 == 0 {
+                device.platform = Platform::Fcm;
+            }
+            match dispatcher.submit(device, push()) {
+                Submitted::Queued => queued += 1,
+                Submitted::Dropped => dropped += 1,
+            }
+        }
+        assert_eq!(queued, bounded.queue_capacity);
+        assert_eq!(dropped, 9 * bounded.queue_capacity);
+        assert_eq!(dispatcher.queue.capacity(), 0);
+        assert_eq!(sender.max_in_flight.load(Ordering::SeqCst), bounded.max_in_flight);
+        let scrape = handle.render();
+        assert!(scrape.contains("notifier_queue_depth 10000"), "{scrape}");
+        assert!(scrape.contains("notifier_in_flight 100"), "{scrape}");
+        for provider in ["apns", "fcm"] {
+            let metric = scrape.lines().find(|line| {
+                line.starts_with("notifier_pushes_total{")
+                    && line.contains(&format!("provider=\"{provider}\""))
+                    && line.contains("outcome=\"dropped\"")
+            });
+            assert!(metric.is_some_and(|line| line.ends_with(" 45000")), "{scrape}");
+        }
+        permits.add_permits(queued + bounded.max_in_flight);
+        settle().await;
+        assert_eq!(sender.attempts.load(Ordering::SeqCst), queued + bounded.max_in_flight);
+        assert_eq!(sender.in_flight.load(Ordering::SeqCst), 0);
+        let drained = handle.render();
+        assert!(drained.contains("notifier_queue_depth 0"), "{drained}");
+        assert!(drained.contains("notifier_in_flight 0"), "{drained}");
+        println!(
+            "burst=100000 queued={queued} dropped={dropped} peak_in_flight=100 sent={} queue_after=0",
+            sender.attempts.load(Ordering::SeqCst)
         );
     }
 

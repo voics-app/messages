@@ -32,12 +32,15 @@ moka = { version = "0.12", features = ["future"] }
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"] }
 subtle = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+voics-snowflake.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [features]
 # Lets tests point the link unfurler at a loopback fixture server. Never enabled in the service binary.
 test-support = []
 
 [dev-dependencies]
+discordy-messages-application = { workspace = true, features = ["test-support"] }
 testcontainers = "0.28"
 tokio = { workspace = true, features = ["test-util"] }
 axum = "0.8"
