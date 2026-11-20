@@ -39,6 +39,10 @@ fn message(channel: Snowflake, id: Snowflake, content: &str) -> Message {
 #[tokio::test]
 async fn scylla_adapters_against_a_real_node() {
     if !support::cpu_supports_scylla() {
+        assert!(
+            std::env::var_os("REQUIRE_SCYLLA_CPU").is_none(),
+            "this job requires a Scylla-capable CPU"
+        );
         eprintln!("skipping: ScyllaDB needs SSE4.2 and PCLMULQDQ, which this CPU does not expose");
         return;
     }
