@@ -11,6 +11,8 @@ use crate::{ChannelId, MessageId, UserId};
 
 /// Maximum content length in characters (Discord parity).
 pub const MAX_CONTENT_CHARS: usize = 2000;
+/// Internal durable forum reservation row; never exposed as a message.
+pub const FORUM_MARKER_FLAG: u32 = 1 << 30;
 /// Maximum embeds per message (Discord parity).
 pub const MAX_EMBEDS: usize = 10;
 

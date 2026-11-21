@@ -44,6 +44,7 @@ pub(crate) struct MessageRow {
     kind: Option<i32>,
     content: Option<String>,
     tts: Option<bool>,
+    crossposted: Option<bool>,
     attachments: Option<Vec<AttachmentUdt>>,
     embeds: Option<String>,
     components: Option<String>,
@@ -73,10 +74,10 @@ pub(crate) struct MessageRow {
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts, crossposted";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 30;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 31;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -88,6 +89,7 @@ impl MessageRow {
             kind: Some(i32::from(message.kind.code())),
             content: Some(message.content.clone()),
             tts: Some(message.tts),
+            crossposted: None,
             attachments: Some(message.attachments.iter().map(attachment_udt).collect()),
             embeds: Some(json_array(&message.embeds)),
             components: Some(json_array(&message.components)),
@@ -123,7 +125,23 @@ impl MessageRow {
 
     /// `None` for partial rows (an update that raced a delete leaves a row
     /// without an author); such rows are treated as deleted.
+    pub(crate) fn forum_marker(
+        self,
+    ) -> Option<(
+        discordy_messages_domain::UserId,
+        discordy_messages_domain::MessageId,
+        String,
+    )> {
+        if self.flags? as u32 != discordy_messages_domain::FORUM_MARKER_FLAG {
+            return None;
+        }
+        Some((snowflake(self.author_id?), snowflake(self.reply_to?), self.content?))
+    }
+
     pub(crate) fn into_message(self) -> Option<Message> {
+        if self.flags.map(|flags| flags as u32) == Some(discordy_messages_domain::FORUM_MARKER_FLAG) {
+            return None;
+        }
         let author_id = self.author_id?;
         let kind = MessageKind::from_code(self.kind.unwrap_or(0) as u8);
         let call = (kind == MessageKind::Call).then(|| Call {
@@ -157,7 +175,7 @@ impl MessageRow {
                 here: self.mention_here.unwrap_or(false),
             },
             reply_to: self.reply_to.map(snowflake),
-            flags: self.flags.unwrap_or(0) as u32,
+            flags: self.flags.unwrap_or(0) as u32 | if self.crossposted.unwrap_or(false) { 1 } else { 0 },
             edited_at_ms: self.edited_at.map(|t| t.0 as u64),
             pinned: self.pinned.unwrap_or(false),
             webhook: self.webhook_id.map(|raw| WebhookAuthor {

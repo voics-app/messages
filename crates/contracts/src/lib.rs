@@ -522,6 +522,49 @@ pub struct InternalCreateMessageRequest {
     pub thread_id: Option<String>,
 }
 
+/// Internal forum start command. API reserves the message ID and sends this at most once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumStartRequest {
+    pub author_id: String,
+    pub message_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumSummaryRequest {
+    pub channel_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InternalCrosspostRequest {
+    pub source_channel_id: String,
+    pub message_id: String,
+    pub webhook_id: String,
+    pub webhook_name: String,
+    pub snapshot: CrosspostSnapshot,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrosspostSnapshot {
+    pub content: String,
+    #[serde(default)]
+    pub embeds: Vec<Value>,
+    #[serde(default)]
+    pub attachments: Vec<CrosspostAttachment>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrosspostAttachment {
+    pub id: String,
+    pub filename: String,
+    pub size: u64,
+    pub content_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub description: Option<String>,
+    pub flags: Option<u32>,
+}
+
 /// api: `POST /internal/v1/auth/introspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntrospectRequest {

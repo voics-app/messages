@@ -1,5 +1,7 @@
 # messages
 
+Forum openers use a reserved message ID and a durable same-partition marker. The API owns publication through its transactional outbox after confirming storage; replay does not recreate a deleted opener. Standard forum summaries read existing message partitions for the first message, stored count and latest activity.
+
 The Voics messages service (Rust, axum, ScyllaDB). It stores message history in 10-day
 ScyllaDB buckets, and serves reactions, pins, read states and attachment uploads. It publishes
 every change to `discordy.message.v1` on Redpanda. Only `standard` delivery-mode channels are
@@ -183,3 +185,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 ## Git hooks
 
 Tests run locally, not in CI. Install [lefthook](https://github.com/evilmartians/lefthook) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
+
+## Announcement publication
+
+The draft announcement flow accepts trusted internal publication markers and
+follower deliveries. The source marker is stored separately from editable
+message fields, so an ordinary edit cannot clear it. Destination messages use
+a reserved ID, carry IS_CROSSPOST and copy attachments into the target channel.
+The API journal owns delivery claims and uncertain-result reconciliation.
+The bridge is not yet approved for rollout.
+

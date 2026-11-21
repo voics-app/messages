@@ -49,6 +49,10 @@ impl HistoryReader {
             .await
     }
 
+    pub async fn count_bucket(&self, channel_id: ChannelId, bucket: Bucket) -> Result<u64, PortError> {
+        self.messages.count_bucket(channel_id, bucket).await
+    }
+
     pub async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {
         let messages = Arc::clone(&self.messages);
         self.newest_reads
