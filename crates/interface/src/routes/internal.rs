@@ -5,12 +5,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use contracts::{
-    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalForumStartRequest, InternalForumSummaryRequest,
-    LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
+    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalCrosspostRequest, InternalForumStartRequest,
+    InternalForumSummaryRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
-use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand};
-use discordy_messages_domain::{Call, InteractionLink, MessageKind, WebhookAuthor};
+use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, CrosspostDelivery};
+use discordy_messages_domain::{Attachment, AttachmentFilename, Call, InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
 
 use crate::dto::{parse_rfc3339, read_state_dto, single};
@@ -75,6 +75,72 @@ pub async fn forum_summaries(
         summaries.push(json!({"channel_id": raw, "message_count": count, "first_message": first, "last_message_id": latest.map(|id| id.to_string())}));
     }
     Ok(Json(json!({"summaries": summaries})))
+}
+
+pub async fn mark_crossposted(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath((Id(channel), Id(message))): ApiPath<(Id, Id)>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let view = state.use_cases.mark_crossposted.execute(channel, message).await?;
+    Ok(Json(single(&state, &view).await))
+}
+
+pub async fn deliver_crosspost(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath(Id(target)): ApiPath<Id>,
+    ApiJson(body): ApiJson<InternalCrosspostRequest>,
+) -> Result<Json<MessageDto>, ApiError> {
+    let source = parse_id("source_channel_id", &body.source_channel_id)?;
+    if source == target {
+        return Err(ApiError::invalid("source_channel_id", "must differ from target"));
+    }
+    let attachments = body
+        .snapshot
+        .attachments
+        .into_iter()
+        .map(|a| {
+            let filename = AttachmentFilename::parse(&a.filename)?;
+            if filename.as_str() != a.filename {
+                return Err(discordy_messages_domain::DomainError::invalid(
+                    "filename",
+                    "must be canonical",
+                ));
+            }
+            Ok(Attachment {
+                id: a
+                    .id
+                    .parse()
+                    .map_err(|_| discordy_messages_domain::DomainError::invalid("id", "invalid attachment id"))?,
+                filename,
+                size: a.size,
+                content_type: a.content_type,
+                width: a.width,
+                height: a.height,
+                description: a.description,
+                flags: a.flags.unwrap_or(0),
+            })
+        })
+        .collect::<Result<Vec<_>, discordy_messages_domain::DomainError>>()
+        .map_err(discordy_messages_application::AppError::from)?;
+    let command = CrosspostDelivery {
+        source_channel: source,
+        target_channel: target,
+        message_id: parse_id("message_id", &body.message_id)?,
+        webhook_id: parse_id("webhook_id", &body.webhook_id)?,
+        webhook_name: body.webhook_name,
+        content: body.snapshot.content,
+        embeds: body
+            .snapshot
+            .embeds
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect(),
+        attachments,
+    };
+    let view = state.use_cases.create_message.deliver_crosspost(command).await?;
+    Ok(Json(single(&state, &view).await))
 }
 
 fn internal_command(

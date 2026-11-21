@@ -5,7 +5,8 @@ use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{BucketQuery, MessageRepository};
 use discordy_messages_domain::{Bucket, ChannelId, Message, MessageId, ScanDirection};
 use scylla::client::session::Session;
-use scylla::statement::{Consistency, SerialConsistency, batch::Batch, prepared::PreparedStatement};
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::{Consistency, SerialConsistency, batch::Batch};
 use scylla::value::CqlTimestamp;
 use scylla::value::{CqlValue, Row};
 
@@ -19,6 +20,7 @@ pub struct ScyllaMessageRepository {
     advance_last: PreparedStatement,
     update_content: PreparedStatement,
     set_pinned: PreparedStatement,
+    mark_crossposted: PreparedStatement,
     find: PreparedStatement,
     delete: PreparedStatement,
     scan_older: PreparedStatement,
@@ -82,6 +84,14 @@ impl ScyllaMessageRepository {
                 "UPDATE messages SET pinned = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
             )
             .await?,
+            mark_crossposted: {
+                let mut statement = prepare(s, "UPDATE messages SET crossposted = true WHERE channel_id = ? AND bucket = ? AND message_id = ? IF EXISTS").await?;
+                statement.set_consistency(Consistency::Quorum);
+                statement.set_serial_consistency(Some(SerialConsistency::Serial));
+                statement.set_is_idempotent(false);
+                statement.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
+                statement
+            },
             find: prepare(s, &format!("{select} AND message_id = ?")).await?,
             delete: prepare(
                 s,
@@ -113,6 +123,23 @@ impl ScyllaMessageRepository {
 
 #[async_trait]
 impl MessageRepository for ScyllaMessageRepository {
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError> {
+        let result = self
+            .session
+            .execute_unpaged(&self.mark_crossposted, Self::key(channel_id, message_id))
+            .await
+            .map_err(super::port_error)?;
+        let rows = result.into_rows_result().map_err(super::port_error)?;
+        let mut iter = rows.rows::<Row>().map_err(super::port_error)?;
+        let row = iter
+            .next()
+            .ok_or_else(|| PortError::new("publication marker returned no status"))?
+            .map_err(super::port_error)?;
+        match row.columns.first() {
+            Some(Some(CqlValue::Boolean(value))) => Ok(*value),
+            _ => Err(PortError::new("publication marker omitted applied status")),
+        }
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         execute(&self.session, &self.insert, MessageRow::from_message(message)).await?;
         // The write timestamp orders by message id (creation millisecond, then
