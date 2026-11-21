@@ -12,7 +12,7 @@ jobs:
   acceptance:
     # Fork code must not run on the persistent self-hosted machine.
     if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: vm-runner
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: 0
