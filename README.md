@@ -1,5 +1,7 @@
 # messages
 
+Forum openers use a reserved message ID and a durable same-partition marker. The API owns publication through its transactional outbox after confirming storage; replay does not recreate a deleted opener. Standard forum summaries read existing message partitions for the first message, stored count and latest activity.
+
 The Voics messages service (Rust, axum, ScyllaDB). It stores message history in 10-day
 ScyllaDB buckets, and serves reactions, pins, read states and attachment uploads. It publishes
 every change to `discordy.message.v1` on Redpanda. Only `standard` delivery-mode channels are

@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use contracts::{
-    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalCrosspostRequest, LastMessageIdResponse,
-    MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
+    AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalCrosspostRequest, InternalForumStartRequest,
+    InternalForumSummaryRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, CrosspostDelivery};
@@ -28,6 +28,53 @@ pub async fn create_message(
     let command = internal_command(channel_id, body)?;
     let view = state.use_cases.create_message.execute_internal(command).await?;
     Ok(Json(single(&state, &view).await))
+}
+
+pub async fn create_forum_start(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiPath(Id(channel_id)): ApiPath<Id>,
+    ApiJson(body): ApiJson<InternalForumStartRequest>,
+) -> Result<Response, ApiError> {
+    let author_id = parse_id("author_id", &body.author_id)?;
+    let message_id = parse_id("message_id", &body.message_id)?;
+    let view = match state
+        .use_cases
+        .create_message
+        .execute_forum_start(channel_id, author_id, message_id, body.content)
+        .await
+    {
+        Ok(view) => view,
+        Err(discordy_messages_application::AppError::Domain(discordy_messages_domain::DomainError::UnknownMessage)) => {
+            return Ok((StatusCode::GONE, Json(json!({"status":"deleted"}))).into_response());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Json(single(&state, &view).await).into_response())
+}
+
+pub async fn forum_summaries(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiJson(body): ApiJson<InternalForumSummaryRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if body.channel_ids.len() > 50 {
+        return Err(ApiError::invalid("channel_ids", "at most 50 channels"));
+    }
+    let mut summaries = Vec::with_capacity(body.channel_ids.len());
+    for raw in body.channel_ids {
+        let channel_id = parse_id("channel_ids", &raw)?;
+        let (count, first, latest) = state.use_cases.history.forum_summary(channel_id).await?;
+        let first = match first {
+            Some(message) => {
+                let dto = single(&state, &MessageView::without_reactions(message)).await;
+                Some(json!({"id": dto.id, "content": dto.content, "attachments": dto.attachments}))
+            }
+            None => None,
+        };
+        summaries.push(json!({"channel_id": raw, "message_count": count, "first_message": first, "last_message_id": latest.map(|id| id.to_string())}));
+    }
+    Ok(Json(json!({"summaries": summaries})))
 }
 
 pub async fn mark_crossposted(

@@ -207,6 +207,70 @@ impl CreateMessage {
         self.store(&access, command, None).await
     }
 
+    /// Idempotently stores a reserved forum opening and a durable marker in the
+    /// same Scylla partition. Replays never rewrite an existing or deleted opener.
+    pub async fn execute_forum_start(
+        &self,
+        channel_id: ChannelId,
+        author_id: discordy_messages_domain::UserId,
+        message_id: MessageId,
+        content: String,
+    ) -> AppResult<MessageView> {
+        use sha2::{Digest, Sha256};
+        if channel_id == message_id
+            || discordy_messages_domain::Bucket::of(channel_id) != discordy_messages_domain::Bucket::of(message_id)
+        {
+            return Err(DomainError::invalid(
+                "message_id",
+                "forum opener must have a distinct ID in the channel partition",
+            )
+            .into());
+        }
+        let access = self.access.refresh(channel_id, author_id).await?;
+        // The internal API already checked the actor and permission. Pending
+        // posts deliberately expose no normal channel permissions.
+        access.ensure_standard_delivery()?;
+        let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let command = CreateMessageCommand {
+            channel_id,
+            author_id,
+            content,
+            ..CreateMessageCommand::default()
+        };
+        let mut message = self.compose_message(&access, &command, None).await?;
+        message.id = message_id;
+        let mut marker = message.clone();
+        marker.id = channel_id;
+        marker.content = digest.clone();
+        marker.flags = discordy_messages_domain::FORUM_MARKER_FLAG;
+        marker.reply_to = Some(message_id);
+        marker.mentions = Default::default();
+        marker.attachments.clear();
+        marker.embeds.clear();
+        marker.components.clear();
+        if self.messages.insert_forum_once(&marker, &message).await? {
+            // The API transaction publishes MESSAGE_CREATE through its durable outbox
+            // once it has confirmed storage and made the thread visible.
+            self.record_side_effects(&message, access.guild_id).await;
+            self.unfurl.spawn(&message);
+            return Ok(MessageView::without_reactions(message));
+        }
+        match self.messages.forum_marker(channel_id).await? {
+            Some((author, id, hash)) if author == author_id && id == message_id && hash == digest => {}
+            _ => {
+                return Err(
+                    DomainError::invalid("message_id", "forum reservation conflicts with an existing record").into(),
+                );
+            }
+        }
+        let existing = self
+            .messages
+            .find(channel_id, message_id)
+            .await?
+            .ok_or(DomainError::UnknownMessage)?;
+        Ok(MessageView::without_reactions(existing))
+    }
+
     /// Forwards a message: the caller needs to read the source and to send in
     /// the target. The snapshot owns copies of the source's files, so deleting
     /// the source never breaks the forward. Both ends must be standard-mode;
@@ -467,6 +531,60 @@ mod tests {
                 nonce: Some("n-1".into())
             }
         );
+    }
+
+    #[tokio::test]
+    async fn forum_start_uses_reserved_id_and_author() {
+        let h = Harness::new();
+        let id = Snowflake::new((101 << 22) + 99);
+        let view = CreateMessage::new(&h.ports)
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        assert_eq!(view.message.id, id);
+        let stored = h.messages.find(CHANNEL, id).await.unwrap().unwrap();
+        assert_eq!(stored.author_id, ALICE);
+        assert_eq!(stored.content, "opening");
+        assert!(h.events.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn forum_start_replay_preserves_existing_and_deleted_openers() {
+        let h = Harness::new();
+        let id = Snowflake::new(CHANNEL.value() + 1);
+        let use_case = CreateMessage::new(&h.ports);
+        use_case
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        let replay = use_case
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        assert_eq!(replay.message.id, id);
+        assert!(h.events.events.lock().unwrap().is_empty());
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, ALICE, id, "different".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, BOB, id, "opening".into())
+                .await
+                .is_err()
+        );
+        h.messages.delete(CHANNEL, &[id]).await.unwrap();
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+                .await
+                .is_err()
+        );
+        assert!(h.messages.find(CHANNEL, id).await.unwrap().is_none());
+        assert!(h.messages.find(CHANNEL, CHANNEL).await.unwrap().is_none());
+        assert!(h.messages.forum_marker(CHANNEL).await.unwrap().is_some());
     }
 
     #[tokio::test]
