@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
         );
 
     let internal = Router::new()
+        .route("/media/sign", post(internal::sign_media))
         .route("/channels/{channel_id}/crossposts", post(internal::deliver_crosspost))
         .route("/channels/{channel_id}/messages", post(internal::create_message))
         .route("/channels/{channel_id}/forum-start", post(internal::create_forum_start))

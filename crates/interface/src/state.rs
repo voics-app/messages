@@ -103,6 +103,7 @@ pub struct Shared {
 pub struct AppState {
     shared: Arc<Shared>,
     pub scheduled: Option<Arc<discordy_messages_application::scheduled::ScheduledMessages>>,
+    pub gif_media_hosts: Arc<[String]>,
 }
 
 impl AppState {
@@ -128,7 +129,17 @@ impl AppState {
                 metrics,
             }),
             scheduled: None,
+            gif_media_hosts: Arc::from([]),
         }
+    }
+
+    pub fn with_gif_media_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.gif_media_hosts = hosts
+            .into_iter()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
+        self
     }
 
     pub fn with_scheduled(
