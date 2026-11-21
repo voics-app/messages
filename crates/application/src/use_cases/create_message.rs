@@ -182,11 +182,12 @@ impl CreateMessage {
             return self.forward(source, command).await;
         }
         let with_attachments = !command.attachments.is_empty();
-        let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
-            a.ensure_can_send(with_attachments)?;
-            ensure_tts_permission(a, command.tts)
-        })
-        .await?;
+        // Membership can change between cache entries (for example a user
+        // leaves and rejoins pending screening). Never authorize a send from
+        // a cached positive answer.
+        let access = self.access.refresh(command.channel_id, command.author_id).await?;
+        access.ensure_can_send(with_attachments)?;
+        ensure_tts_permission(&access, command.tts)?;
         self.store(&access, command, None).await
     }
 
@@ -238,11 +239,9 @@ impl CreateMessage {
             ),
         };
         let with_attachments = !snapshot.attachments.is_empty() || !command.attachments.is_empty();
-        let access = checked_access(&*self.access, command.channel_id, command.author_id, |a| {
-            a.ensure_can_send(with_attachments)?;
-            ensure_tts_permission(a, command.tts)
-        })
-        .await?;
+        let access = self.access.refresh(command.channel_id, command.author_id).await?;
+        access.ensure_can_send(with_attachments)?;
+        ensure_tts_permission(&access, command.tts)?;
         // Files live under the channel of the message that owns them.
         let attachments = self
             .copy_attachments(original.channel_id, command.channel_id, &snapshot.attachments)
@@ -635,6 +634,19 @@ mod tests {
         h.access.set_permissions(Permissions::VIEW_CHANNEL);
         let result = CreateMessage::new(&h.ports).execute(command("hi")).await;
         assert_eq!(result, Err(AppError::Domain(DomainError::MissingPermissions)));
+    }
+
+    #[tokio::test]
+    async fn sending_uses_current_access_instead_of_a_cached_grant() {
+        let h = Harness::new();
+        *h.access.fresh.lock().unwrap() = Some(Ok(guild_access(Permissions::VIEW_CHANNEL)));
+        let result = CreateMessage::new(&h.ports).execute(command("blocked")).await;
+        assert_eq!(result, Err(AppError::Domain(DomainError::MissingPermissions)));
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+
+        h.access.set_permissions(Permissions::VIEW_CHANNEL);
+        *h.access.fresh.lock().unwrap() = Some(Ok(guild_access(MEMBER)));
+        assert!(CreateMessage::new(&h.ports).execute(command("accepted")).await.is_ok());
     }
 
     #[tokio::test]
