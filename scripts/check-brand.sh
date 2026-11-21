@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebrand check (discordy-voics/docs#69): the product name and the brand domain must not appear in
+# Rebrand check (voics-app/docs#69): the product name and the brand domain must not appear in
 # user-visible string literals in Rust sources. They come from config (`BRAND_NAME`, `BRAND_URL`).
 # Test code under tests/ is exempt; a line may opt out with the marker `brand-check: allow`.
 # Internal identifiers (crate names, image names, env var prefixes) are out of scope on purpose.

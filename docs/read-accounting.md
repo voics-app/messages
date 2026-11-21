@@ -75,8 +75,8 @@ compatible forward fix. Otherwise remain fenced and restore the complete pre-cha
 set with explicit acceptance of intervening data loss, or build and verify an intentional
 companion-to-legacy conversion. No automatic conversion tool is provided. Preserve evidence.
 
-See the central [rollout and recovery runbook](https://github.com/discordy-voics/docs/blob/develop/runbooks/read-accounting.md)
-and [ADR 0026](https://github.com/discordy-voics/docs/blob/develop/adr/0026-atomic-read-accounting.md).
+See the central [rollout and recovery runbook](https://github.com/voics-app/docs/blob/develop/runbooks/read-accounting.md)
+and [ADR 0026](https://github.com/voics-app/docs/blob/develop/adr/0026-atomic-read-accounting.md).
 
 ## Operational limits and proof
 
