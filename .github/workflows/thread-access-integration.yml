@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   private-thread-access:
-    runs-on: vm-runner
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
