@@ -103,6 +103,14 @@ impl Call {
     }
 }
 
+/// Immutable display information captured when a sticker is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StickerItem {
+    pub id: crate::Snowflake,
+    pub name: String,
+    pub format_type: u8,
+}
+
 /// What an author submits when sending a message. Embeds and components are
 /// opaque JSON objects (validated as JSON by the interface layer).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -110,6 +118,7 @@ pub struct MessageDraft {
     pub content: String,
     pub tts: bool,
     pub attachments: Vec<Attachment>,
+    pub sticker_items: Vec<StickerItem>,
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
@@ -164,6 +173,7 @@ pub struct Message {
     pub content: String,
     pub tts: bool,
     pub attachments: Vec<Attachment>,
+    pub sticker_items: Vec<StickerItem>,
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub mentions: Mentions,
@@ -214,6 +224,7 @@ impl Message {
             content: draft.content,
             tts: draft.tts && !kind.is_system(),
             attachments: draft.attachments,
+            sticker_items: draft.sticker_items,
             embeds: draft.embeds,
             components: draft.components,
             reply_to: draft.reply_to,
@@ -339,6 +350,7 @@ impl Message {
         let is_empty = !self.kind.is_system()
             && self.content.trim().is_empty()
             && self.attachments.is_empty()
+            && self.sticker_items.is_empty()
             && self.embeds.is_empty()
             && self.forward.is_none();
         if is_empty {
@@ -583,6 +595,7 @@ mod tests {
             message_id: Snowflake::new(3),
             guild_id: None,
             snapshot: crate::MessageSnapshot {
+                sticker_items: vec![],
                 content: "orig".into(),
                 attachments: vec![],
                 embeds: vec![],

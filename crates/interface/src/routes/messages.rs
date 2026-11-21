@@ -118,6 +118,12 @@ pub async fn create(
                 flags: a.flags.unwrap_or(0),
             })
             .collect(),
+        sticker_ids: body
+            .sticker_ids
+            .unwrap_or_default()
+            .iter()
+            .map(|id| parse_id("sticker_ids", id))
+            .collect::<Result<_, _>>()?,
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,

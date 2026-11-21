@@ -119,6 +119,13 @@ pub struct LookedUpUser {
     pub flags: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StickerItemDto {
+    pub id: String,
+    pub name: String,
+    pub format_type: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageDto {
     pub id: String,
@@ -138,6 +145,8 @@ pub struct MessageDto {
     pub mentions: Vec<UserRef>,
     pub mention_roles: Vec<String>,
     pub attachments: Vec<AttachmentDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sticker_items: Vec<StickerItemDto>,
     pub embeds: Vec<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub reactions: Vec<ReactionDto>,
@@ -182,6 +191,8 @@ pub struct SnapshotMessageDto {
     pub mentions: Vec<UserRef>,
     pub mention_roles: Vec<String>,
     pub attachments: Vec<AttachmentDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sticker_items: Vec<StickerItemDto>,
     pub embeds: Vec<Value>,
     #[serde(rename = "type")]
     pub kind: u8,
@@ -288,6 +299,8 @@ pub struct CreateMessageRequest {
     pub nonce: Option<Value>,
     #[serde(default)]
     pub attachments: Option<Vec<AttachmentReferenceDto>>,
+    #[serde(default)]
+    pub sticker_ids: Option<Vec<String>>,
     #[serde(default)]
     pub message_reference: Option<MessageReferenceRequest>,
     #[serde(default)]

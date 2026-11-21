@@ -5,7 +5,8 @@ use discordy_messages_domain::attachment::MAX_ATTACHMENT_BYTES;
 use discordy_messages_domain::attachment::{upload_flags, validate_description};
 use discordy_messages_domain::{
     Attachment, Audience, Call, ChannelAccess, ChannelId, DomainError, FLAG_EPHEMERAL, ForwardOrigin, InteractionLink,
-    Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, UploadKey, UserId, WebhookAuthor,
+    Message, MessageDraft, MessageId, MessageKind, MessageSnapshot, Snowflake, StickerItem, UploadKey, UserId,
+    WebhookAuthor,
 };
 
 use super::MessagingPorts;
@@ -44,6 +45,7 @@ pub struct CreateMessageCommand {
     pub tts: bool,
     pub nonce: Option<String>,
     pub attachments: Vec<AttachmentReference>,
+    pub sticker_ids: Vec<Snowflake>,
     pub embeds: Vec<String>,
     pub components: Vec<String>,
     pub reply_to: Option<MessageId>,
@@ -285,6 +287,7 @@ impl CreateMessage {
             attachments: self
                 .resolve_attachments(command.channel_id, &command.attachments)
                 .await?,
+            sticker_items: self.resolve_stickers(command).await?,
             embeds: command.embeds.clone(),
             components: command.components.clone(),
             reply_to: command.reply_to,
@@ -312,6 +315,24 @@ impl CreateMessage {
             Some(message) => Ok(message),
             None => Err(DomainError::invalid("message_reference", "unknown message").into()),
         }
+    }
+
+    async fn resolve_stickers(&self, command: &CreateMessageCommand) -> AppResult<Vec<StickerItem>> {
+        if command.sticker_ids.len() > 3
+            || command.sticker_ids.iter().collect::<HashSet<_>>().len() != command.sticker_ids.len()
+        {
+            return Err(DomainError::invalid("sticker_ids", "at most three distinct stickers may be sent").into());
+        }
+        let mut stickers = Vec::with_capacity(command.sticker_ids.len());
+        for &id in &command.sticker_ids {
+            let sticker = self
+                .access
+                .resolve_sticker(command.channel_id, command.author_id, id)
+                .await?
+                .ok_or_else(|| DomainError::invalid("sticker_ids", "sticker unavailable"))?;
+            stickers.push(sticker);
+        }
+        Ok(stickers)
     }
 
     async fn resolve_attachments(
@@ -404,6 +425,46 @@ mod tests {
                 nonce: Some("n-1".into())
             }
         );
+    }
+
+    #[tokio::test]
+    async fn sticker_only_message_is_resolved_and_stored() {
+        let h = Harness::new();
+        let id = Snowflake::new(42);
+        h.access.stickers.lock().unwrap().insert(
+            id,
+            StickerItem {
+                id,
+                name: "wave".into(),
+                format_type: 1,
+            },
+        );
+        let mut cmd = command("");
+        cmd.sticker_ids = vec![id];
+        let view = CreateMessage::new(&h.ports).execute(cmd).await.unwrap();
+        assert_eq!(view.message.sticker_items[0].id, id);
+        assert_eq!(
+            h.messages
+                .find(CHANNEL, view.message.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .sticker_items,
+            view.message.sticker_items
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_or_duplicate_stickers_do_not_send() {
+        let h = Harness::new();
+        let id = Snowflake::new(42);
+        let mut cmd = command("");
+        cmd.sticker_ids = vec![id];
+        assert!(CreateMessage::new(&h.ports).execute(cmd.clone()).await.is_err());
+        cmd.sticker_ids = vec![id, id];
+        assert!(CreateMessage::new(&h.ports).execute(cmd).await.is_err());
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+        assert!(h.events.kinds().is_empty());
     }
 
     #[tokio::test]

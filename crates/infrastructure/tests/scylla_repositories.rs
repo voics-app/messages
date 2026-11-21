@@ -14,7 +14,7 @@ use discordy_messages_domain::paging::plan;
 use discordy_messages_domain::snowflake::DISCORDY_EPOCH_MS;
 use discordy_messages_domain::{
     Attachment, AttachmentFilename, Bucket, Emoji, ForwardOrigin, HistoryCursor, Mentions, Message, MessageDraft,
-    MessageKind, MessageSnapshot, PageLimit, ReadState, ScanDirection, Snowflake,
+    MessageKind, MessageSnapshot, PageLimit, ReadState, ScanDirection, Snowflake, StickerItem,
 };
 use discordy_messages_infrastructure::scylla::{
     ScyllaActivityRepository, ScyllaMessageRepository, ScyllaPinRepository, ScyllaReactionRepository,
@@ -69,6 +69,11 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     let channel = id_at(1, 0);
     let mut original = message(channel, id_at(BUCKET_SIZE_MS * 2, 1), "hello <@7>");
     original.tts = true;
+    original.sticker_items.push(StickerItem {
+        id: Snowflake::new(7),
+        name: "wave".into(),
+        format_type: 1,
+    });
     original.attachments.push(Attachment {
         id: Snowflake::new(900),
         filename: AttachmentFilename::parse("cat.png").unwrap(),
@@ -110,6 +115,7 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
                 message_id: id_at(10, 1),
                 guild_id: Some(Snowflake::new(500)),
                 snapshot: MessageSnapshot {
+                    sticker_items: original.sticker_items.clone(),
                     content: "forwarded <@7>".into(),
                     attachments: original.attachments.clone(),
                     embeds: vec![r#"{"title":"t"}"#.into()],

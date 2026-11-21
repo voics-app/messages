@@ -125,6 +125,14 @@ backgrounded phone; the client handles foreground duplicates.
 
 Endpoints: `/healthz`, `/readyz` (Redpanda), `/metrics`, `POST /internal/v1/manual-push` (internal token). Metrics: `notifier_events_total{result}`, `notifier_decisions_total{verdict}`, `notifier_pushes_total{provider,outcome}` (sent, invalid_token, failed, dropped, unsupported, manual), `notifier_push_retries_total`, `notifier_push_duration_seconds`, `notifier_queue_depth`, `notifier_queue_capacity`, `notifier_in_flight`, `notifier_in_flight_limit`, `notifier_apns_errors_total{status,reason}`, `notifier_consumer_errors_total`.
 
+## Sticker message proposal
+
+Standard guild messages may carry up to three distinct `sticker_ids`. The service
+resolves each against the API for the current author and destination before storing
+an immutable `sticker_items` snapshot, which is also retained in forwards and events.
+Migration 0012 adds the Scylla column. This is draft work for api#33 and depends on
+the corresponding API resolver; the built-in pack and client are not yet available.
+
 ## Run locally
 
 Start the compose stack from the `gitops` repo (`gitops/local`), then:

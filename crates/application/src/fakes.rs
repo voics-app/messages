@@ -378,6 +378,7 @@ pub struct FakeAccess {
     pub fresh: Mutex<Option<Result<ChannelAccess, AccessError>>>,
     /// Channels answered with empty permissions.
     pub denied: Mutex<std::collections::HashSet<ChannelId>>,
+    pub stickers: Mutex<HashMap<Snowflake, discordy_messages_domain::StickerItem>>,
 }
 
 impl FakeAccess {
@@ -400,6 +401,15 @@ impl FakeAccess {
 
 #[async_trait]
 impl ChannelAccessProvider for FakeAccess {
+    async fn resolve_sticker(
+        &self,
+        _channel_id: ChannelId,
+        _user_id: UserId,
+        id: Snowflake,
+    ) -> Result<Option<discordy_messages_domain::StickerItem>, PortError> {
+        Ok(self.stickers.lock().unwrap().get(&id).cloned())
+    }
+
     async fn access(&self, channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
         let mut answer = self.access.lock().unwrap().clone();
         if let (true, Ok(access)) = (self.denied.lock().unwrap().contains(&channel_id), answer.as_mut()) {
@@ -907,6 +917,7 @@ impl Harness {
             channel: Mutex::new(Ok(guild_access(MEMBER))),
             fresh: Mutex::new(None),
             denied: Mutex::default(),
+            stickers: Mutex::default(),
         });
         let messages = Arc::new(InMemoryMessages::default());
         let reactions = Arc::new(InMemoryReactions::default());

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use contracts::{ChannelAccessResponse, ChannelRoutingResponse};
 use discordy_messages_application::PortError;
 use discordy_messages_application::ports::{AccessError, ChannelAccessProvider};
-use discordy_messages_domain::{ChannelAccess, ChannelId, DeliveryMode, Permissions, Snowflake, UserId};
+use discordy_messages_domain::{ChannelAccess, ChannelId, DeliveryMode, Permissions, Snowflake, StickerItem, UserId};
 use moka::future::Cache;
 use reqwest::StatusCode;
 
@@ -80,6 +80,44 @@ fn to_domain(body: ChannelAccessResponse) -> Result<ChannelAccess, PortError> {
 
 #[async_trait]
 impl ChannelAccessProvider for HttpChannelAccess {
+    async fn resolve_sticker(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        id: Snowflake,
+    ) -> Result<Option<StickerItem>, PortError> {
+        #[derive(serde::Deserialize)]
+        struct StickerResponse {
+            id: String,
+            name: String,
+            format_type: u8,
+        }
+        let response = self
+            .api
+            .get(&format!(
+                "/internal/v1/channels/{channel_id}/users/{user_id}/stickers/{id}"
+            ))
+            .send()
+            .await
+            .map_err(port_error)?;
+        match response.status() {
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND => Ok(None),
+            status if status.is_success() => {
+                let sticker: StickerResponse = response.json().await.map_err(port_error)?;
+                let resolved_id = sticker.id.parse().map_err(port_error)?;
+                if resolved_id != id {
+                    return Err(port_error("sticker resolver returned a different ID"));
+                }
+                Ok(Some(StickerItem {
+                    id: resolved_id,
+                    name: sticker.name,
+                    format_type: sticker.format_type,
+                }))
+            }
+            status => Err(port_error(format!("sticker endpoint returned {status}"))),
+        }
+    }
+
     async fn access(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
         let answer = self
             .cache

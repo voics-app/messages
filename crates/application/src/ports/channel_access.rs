@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use discordy_messages_domain::{ChannelAccess, ChannelId, DomainError, UserId};
+use discordy_messages_domain::{ChannelAccess, ChannelId, DomainError, Snowflake, StickerItem, UserId};
 
 use crate::error::{AppError, PortError};
 
@@ -28,6 +28,16 @@ impl From<AccessError> for AppError {
 #[async_trait]
 pub trait ChannelAccessProvider: Send + Sync {
     async fn access(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError>;
+
+    /// Resolve a sticker against the current author and destination; no cache is used.
+    async fn resolve_sticker(
+        &self,
+        _channel_id: ChannelId,
+        _user_id: UserId,
+        _id: Snowflake,
+    ) -> Result<Option<StickerItem>, PortError> {
+        Ok(None)
+    }
 
     /// The channel's guild and delivery mode, without any user: for posts
     /// made by webhooks, which are not members. The permissions are empty.
