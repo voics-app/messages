@@ -45,6 +45,9 @@ impl MessageRepository for ObservedMessages {
     async fn last_message_id(&self, channel: ChannelId) -> Result<Option<MessageId>, PortError> {
         self.inner.last_message_id(channel).await
     }
+    async fn message_count(&self, channel: ChannelId) -> Result<u64, PortError> {
+        self.inner.message_count(channel).await
+    }
     async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError> {
         self.inner.channels_with_messages().await
     }
