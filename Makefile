@@ -1,6 +1,6 @@
 .PHONY: dev test lint build docker fmt
 
-IMAGE ?= ghcr.io/discordy-voics/messages
+IMAGE ?= ghcr.io/voics-app/messages
 VERSION ?= $(shell sed -n 's/.*"\.": "\(.*\)".*/\1/p' .release-please-manifest.json)
 
 # Runs the service against the local compose stack (gitops/local). Reads .env.
