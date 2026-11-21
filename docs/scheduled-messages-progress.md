@@ -1,6 +1,6 @@
 # Scheduled messages implementation status
 
-This branch implements the backend of messages#61 in reviewable checkpoints. The interface design is in [docs#182](https://github.com/discordy-voics/docs/pull/182), ADR0028 and merged [contracts#50](https://github.com/discordy-voics/contracts/pull/50). The feature remains disabled by default and has not been deployed.
+This branch implements the backend of messages#61 in reviewable checkpoints. The interface design is in [docs#182](https://github.com/voics-app/docs/pull/182), ADR0028 and merged [contracts#50](https://github.com/voics-app/contracts/pull/50). The feature remains disabled by default and has not been deployed.
 
 The domain owns request identity, time/text rules, revision-fenced transitions, preparation recovery, dependency backoff and delivery outcomes. The application owns create/replay, edit/cancel, ownership, discovery ports and a single claimed dispatch attempt. `CreateMessage` supplies ordinary composition and publication with fresh authorization around the claim. The real HTTP access adapter bypasses both cached values and older in-flight requests for refresh.
 
@@ -16,4 +16,4 @@ Author inspection now also reconciles expired unindexed preparation, clearing co
 
 Remaining acceptance is independent backend review, compatible client surfaces, real two-account/API/gateway/client end-to-end delivery and rollout-specific alert configuration. Client work is coordinated in a separate branch. This is not a completed issue 61.
 
-The intended storage guarantee is one insertion attempt after a durable claim. Lost acknowledgements or abandoned claims become visible `delivery_unknown`, without automatic resending. An original attempt may later certify storage. Publication and accounting remain best effort, as with ordinary messages. Current author account eligibility additionally requires [api#150](https://github.com/discordy-voics/api/pull/150).
+The intended storage guarantee is one insertion attempt after a durable claim. Lost acknowledgements or abandoned claims become visible `delivery_unknown`, without automatic resending. An original attempt may later certify storage. Publication and accounting remain best effort, as with ordinary messages. Current author account eligibility additionally requires [api#150](https://github.com/voics-app/api/pull/150).

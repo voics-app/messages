@@ -1,0 +1,16 @@
+name: private thread access integration
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - '.github/workflows/thread-access-integration.yml'
+concurrency:
+  group: private-thread-access-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  private-thread-access:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked -p discordy-messages-infrastructure --test api_clients private_thread_access_rechecks_revocation_and_rejoin_without_waiting_for_cache
