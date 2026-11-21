@@ -325,6 +325,8 @@ mod tests {
             description: None,
             flags: 0,
             height: None,
+            duration_ms: None,
+            waveform: None,
         }
     }
 

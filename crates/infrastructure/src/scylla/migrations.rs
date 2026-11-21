@@ -35,6 +35,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../../migrations/0007_message_tts.cql"),
     ),
     (
+        "0011_voice_attachment",
+        include_str!("../../../../migrations/0011_voice_attachment.cql"),
+    ),
+    (
         "0013_announcement_publication",
         include_str!("../../../../migrations/0013_announcement_publication.cql"),
     ),

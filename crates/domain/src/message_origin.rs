@@ -15,6 +15,7 @@ pub const FLAG_SUPPRESS_EMBEDS: u32 = 1 << 2;
 pub const FLAG_EPHEMERAL: u32 = 1 << 6;
 /// `@silent`: no push, desktop or unread-mention notification for the message.
 pub const FLAG_SUPPRESS_NOTIFICATIONS: u32 = 1 << 12;
+pub const FLAG_IS_VOICE_MESSAGE: u32 = 1 << 13;
 
 /// Set on messages posted through a webhook. The message's author is the
 /// webhook itself, so `username` and `avatar_url` override its display.

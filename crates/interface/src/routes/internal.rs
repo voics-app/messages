@@ -9,7 +9,7 @@ use contracts::{
     InternalForumSummaryRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
-use discordy_messages_application::use_cases::{AttachmentReference, CreateMessageCommand, CrosspostDelivery};
+use discordy_messages_application::use_cases::{CreateMessageCommand, CrosspostDelivery};
 use discordy_messages_domain::{Attachment, AttachmentFilename, Call, InteractionLink, MessageKind, WebhookAuthor};
 use serde_json::{Value, json};
 
@@ -149,6 +149,8 @@ pub async fn deliver_crosspost(
                 content_type: a.content_type,
                 width: a.width,
                 height: a.height,
+                duration_ms: None,
+                waveform: None,
                 description: a.description,
                 flags: a.flags.unwrap_or(0),
             })
@@ -240,12 +242,8 @@ fn internal_command(
             .attachments
             .unwrap_or_default()
             .into_iter()
-            .map(|a| AttachmentReference {
-                uploaded_filename: a.uploaded_filename,
-                description: a.description,
-                flags: a.flags.unwrap_or(0),
-            })
-            .collect(),
+            .map(super::messages::attachment_reference)
+            .collect::<Result<Vec<_>, _>>()?,
         embeds: json_texts(body.embeds),
         components: json_texts(body.components),
         reply_to,

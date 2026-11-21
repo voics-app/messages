@@ -62,6 +62,7 @@ async fn scylla_adapters_against_a_real_node() {
 
     message_crud(messages.as_ref()).await;
     guild_activity_markers(messages.as_ref(), &session).await;
+    voice_attachment_round_trip(messages.as_ref()).await;
     forum_reservation_is_atomic_and_survives_deletion(messages.as_ref(), &second_message_writer).await;
     publication_marker_survives_stale_edits(messages.as_ref()).await;
     system_message_payloads(messages.as_ref()).await;
@@ -105,6 +106,29 @@ async fn guild_activity_markers(repo: &ScyllaMessageRepository, session: &scylla
         );
         assert_eq!(repo.guild_message_count(guild, expected_day).await.unwrap(), 1);
     }
+}
+
+async fn voice_attachment_round_trip(repo: &ScyllaMessageRepository) {
+    let channel = id_at(20, 0);
+    let draft = MessageDraft {
+        flags: discordy_messages_domain::FLAG_IS_VOICE_MESSAGE,
+        attachments: vec![Attachment {
+            id: Snowflake::new(901),
+            filename: AttachmentFilename::parse("voice.ogg").unwrap(),
+            content_type: Some("audio/ogg".into()),
+            size: 512,
+            width: None,
+            height: None,
+            duration_ms: Some(1500),
+            waveform: Some("AQID".into()),
+            description: None,
+            flags: 0,
+        }],
+        ..MessageDraft::default()
+    };
+    let original = Message::compose(id_at(BUCKET_SIZE_MS * 2, 2), channel, AUTHOR, draft, false).unwrap();
+    repo.insert(&original).await.unwrap();
+    assert_eq!(repo.find(channel, original.id).await.unwrap(), Some(original));
 }
 
 async fn forum_reservation_is_atomic_and_survives_deletion(
@@ -175,6 +199,8 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
         size: 512,
         width: None,
         height: None,
+        duration_ms: None,
+        waveform: None,
         description: Some("a cat".into()),
         flags: 8,
     });

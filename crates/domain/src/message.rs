@@ -332,6 +332,26 @@ impl Message {
         if self.attachments.len() > MAX_ATTACHMENTS_PER_MESSAGE {
             reject("attachments", "must be 10 or fewer");
         }
+        if self.flags & crate::FLAG_IS_VOICE_MESSAGE != 0 {
+            if self.attachments.len() != 1
+                || !self.content.trim().is_empty()
+                || !self.embeds.is_empty()
+                || !self.components.is_empty()
+            {
+                reject(
+                    "attachments",
+                    "voice messages require exactly one attachment and no text, embeds or components",
+                );
+            } else if self.attachments[0].duration_ms.is_none() || self.attachments[0].waveform.is_none() {
+                reject("attachments", "voice messages require duration and waveform");
+            }
+        } else if self
+            .attachments
+            .iter()
+            .any(|a| a.duration_ms.is_some() || a.waveform.is_some())
+        {
+            reject("attachments", "voice metadata requires the voice message flag");
+        }
         if self.embeds.len() > MAX_EMBEDS {
             reject("embeds", "must be 10 or fewer");
         }
@@ -381,6 +401,8 @@ mod tests {
             size: 10,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }
