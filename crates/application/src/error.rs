@@ -17,6 +17,8 @@ impl PortError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {
     #[error(transparent)]
+    Poll(#[from] discordy_messages_domain::poll::PollError),
+    #[error(transparent)]
     Domain(#[from] DomainError),
     #[error("dependency unavailable: {0}")]
     Unavailable(#[from] PortError),
@@ -25,3 +27,12 @@ pub enum AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+impl From<crate::ports::PollStoreError> for AppError {
+    fn from(error: crate::ports::PollStoreError) -> Self {
+        match error {
+            crate::ports::PollStoreError::Rule(rule) => Self::Poll(rule),
+            crate::ports::PollStoreError::Unavailable(error) => Self::Unavailable(error),
+        }
+    }
+}

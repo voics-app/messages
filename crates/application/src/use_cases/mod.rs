@@ -31,7 +31,7 @@ mod reindex_search;
 mod remove_all_reactions;
 mod remove_own_reaction;
 mod search_messages;
-mod support;
+pub(crate) mod support;
 mod unfurl_links;
 mod unpin_message;
 mod update_call;
@@ -64,6 +64,8 @@ pub use update_call::UpdateCall;
 /// Every port the use cases depend on, wired once by the composition root.
 #[derive(Clone)]
 pub struct MessagingPorts {
+    pub polls: Option<Arc<dyn crate::ports::PollRepository>>,
+    pub poll_creation_enabled: bool,
     pub access: Arc<dyn ChannelAccessProvider>,
     pub messages: Arc<dyn MessageRepository>,
     pub reactions: Arc<dyn ReactionRepository>,

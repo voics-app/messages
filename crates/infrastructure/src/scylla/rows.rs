@@ -65,16 +65,17 @@ pub(crate) struct MessageRow {
     call_participants: Option<Vec<i64>>,
     call_ended_at: Option<CqlTimestamp>,
     thread_id: Option<i64>,
+    poll_definition: Option<String>,
 }
 
 /// The column list matching [`MessageRow`], for SELECT and INSERT.
 pub(crate) const MESSAGE_COLUMNS: &str = "channel_id, bucket, message_id, author_id, type, content, attachments, \
      embeds, components, mentions, mention_roles, mention_everyone, reply_to, flags, edited_at, pinned, \
      webhook_id, webhook_username, webhook_avatar_url, interaction_id, application_id, forward_channel_id, \
-     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts";
+     forward_message_id, forward_guild_id, forward_snapshot, call_participants, call_ended_at, thread_id, mention_here, tts, poll_definition";
 
 /// Number of columns in [`MESSAGE_COLUMNS`], the INSERT's placeholder count.
-pub(crate) const MESSAGE_COLUMN_COUNT: usize = 30;
+pub(crate) const MESSAGE_COLUMN_COUNT: usize = 31;
 
 impl MessageRow {
     pub(crate) fn from_message(message: &Message) -> Self {
@@ -116,6 +117,7 @@ impl MessageRow {
                 .and_then(|c| c.ended_at_ms)
                 .map(|ms| CqlTimestamp(ms as i64)),
             thread_id: message.thread_id.map(id),
+            poll_definition: message.poll.as_ref().map(super::poll_definition::encode),
         }
     }
 
@@ -134,6 +136,10 @@ impl MessageRow {
             ended_at_ms: self.call_ended_at.map(|t| t.0 as u64),
         });
         Some(Message {
+            poll: match self.poll_definition {
+                Some(raw) => Some(super::poll_definition::decode(&raw)?),
+                None => None,
+            },
             id: snowflake(self.message_id),
             channel_id: snowflake(self.channel_id),
             author_id: snowflake(author_id),

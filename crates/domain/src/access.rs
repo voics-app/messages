@@ -83,6 +83,22 @@ impl ChannelAccess {
         self.ensure_standard_delivery()
     }
 
+    /// Polls use normal send/attachment/thread rules plus SEND_POLLS. Bots
+    /// and humans use this same gate; only authenticated humans may vote.
+    pub fn ensure_can_create_poll(&self, with_attachments: bool) -> Result<(), DomainError> {
+        self.ensure_can_send(with_attachments)?;
+        if self.permissions.has(Permissions::SEND_POLLS) {
+            Ok(())
+        } else {
+            Err(DomainError::MissingPermissions)
+        }
+    }
+
+    pub fn ensure_can_read_poll(&self) -> Result<(), DomainError> {
+        self.ensure_can_read_history()?;
+        self.ensure_standard_delivery()
+    }
+
     /// Upload slots for attachments. Standard channels store the file as is; Ephemeral channels
     /// store client-side encrypted ciphertext (opaque to this service, referenced only from inside
     /// the end-to-end encrypted message). P2P channels never touch the server.

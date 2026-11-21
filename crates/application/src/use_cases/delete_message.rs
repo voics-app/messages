@@ -11,6 +11,7 @@ use crate::ports::{
 };
 
 pub struct DeleteMessage {
+    polls: Option<Arc<dyn crate::ports::PollRepository>>,
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
     reactions: Arc<dyn ReactionRepository>,
@@ -22,6 +23,7 @@ pub struct DeleteMessage {
 impl DeleteMessage {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            polls: ports.polls.clone(),
             access: ports.access.clone(),
             messages: ports.messages.clone(),
             reactions: ports.reactions.clone(),
@@ -36,6 +38,7 @@ impl DeleteMessage {
         access.ensure_can_view()?;
         let message = find_message(self.messages.as_ref(), channel_id, message_id).await?;
         access.ensure_can_delete(actor, message.author_id)?;
+        super::support::fence_poll(self.polls.as_deref(), &message).await?;
         self.messages.delete(channel_id, &[message_id]).await?;
         purge_dependents(
             self.reactions.as_ref(),

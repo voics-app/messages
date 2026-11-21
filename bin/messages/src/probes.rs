@@ -12,6 +12,23 @@ pub struct ScyllaProbe(pub Arc<scylla::Session>);
 
 pub struct ReadStateProbe(pub Arc<scylla::ScyllaReadStateRepository>);
 
+pub struct PollProbe {
+    pub repository: Arc<scylla::ScyllaPollRepository>,
+    pub running: Arc<std::sync::atomic::AtomicBool>,
+}
+#[async_trait]
+impl ReadinessCheck for PollProbe {
+    fn name(&self) -> &'static str {
+        "polls"
+    }
+    async fn check(&self) -> Result<(), PortError> {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(PortError::new("poll expiry worker is not running"));
+        }
+        self.repository.check_ready().await
+    }
+}
+
 pub struct ScheduledProbe {
     pub repository: Arc<scylla::ScyllaScheduledMessages>,
     pub running: Arc<std::sync::atomic::AtomicBool>,

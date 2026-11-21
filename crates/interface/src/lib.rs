@@ -10,6 +10,7 @@ pub mod envelope;
 pub mod error;
 pub mod extract;
 pub mod metrics;
+mod poll_dto;
 pub mod readiness;
 pub mod router;
 pub mod routes;

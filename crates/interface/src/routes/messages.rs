@@ -103,6 +103,7 @@ pub async fn create(
         }
     };
     let command = CreateMessageCommand {
+        poll: body.poll.map(crate::poll_dto::draft).transpose()?,
         channel_id,
         author_id: caller.user_id,
         content: body.content.unwrap_or_default(),
@@ -138,6 +139,12 @@ pub async fn edit(
     ApiPath((Id(channel_id), Id(message_id))): ApiPath<(Id, Id)>,
     ApiJson(body): ApiJson<EditMessageRequest>,
 ) -> Result<Json<MessageDto>, ApiError> {
+    if body.poll.is_some() {
+        return Err(ApiError::invalid(
+            "poll",
+            "poll definitions cannot be edited or removed",
+        ));
+    }
     let edit = MessageEdit {
         content: body.content,
         attachments: body

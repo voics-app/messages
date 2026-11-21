@@ -91,6 +91,38 @@ fn unavailable(detail: &str) -> (StatusCode, u32, String, Option<Value>) {
     )
 }
 
+fn poll_error(error: discordy_messages_domain::poll::PollError) -> (StatusCode, u32, String, Option<Value>) {
+    use discordy_messages_domain::poll::PollError;
+    let field = match &error {
+        PollError::Invalid(error) => {
+            let (status, code, fields) = domain_status(error);
+            return (status, code, error.to_string(), fields);
+        }
+        PollError::Deleted => {
+            return (
+                StatusCode::NOT_FOUND,
+                error_code::UNKNOWN_MESSAGE,
+                "Unknown message".into(),
+                None,
+            );
+        }
+        PollError::Corrupt | PollError::Exhausted => return unavailable(&error.to_string()),
+        PollError::Closed => "poll",
+        PollError::Conflict => "expected_vote_version",
+        PollError::Capacity => "poll.participants",
+    };
+    let fields = field_errors(&[FieldError {
+        field: field.into(),
+        reason: error.to_string(),
+    }]);
+    (
+        StatusCode::CONFLICT,
+        error_code::INVALID_FORM_BODY,
+        error.to_string(),
+        Some(fields),
+    )
+}
+
 /// Discord's 429 body, plus the `Retry-After` header (whole seconds, rounded up).
 fn rate_limited(retry_after_ms: u64) -> Response {
     let seconds = retry_after_ms.div_ceil(1000).max(1);
@@ -111,6 +143,7 @@ fn rate_limited(retry_after_ms: u64) -> Response {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message, errors) = match self {
+            Self::App(AppError::Poll(error)) => poll_error(error),
             Self::App(AppError::Domain(error)) => {
                 let (status, code, errors) = domain_status(&error);
                 (status, code, error.to_string(), errors)

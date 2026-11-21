@@ -74,6 +74,20 @@ pub(crate) async fn purge_dependents(
     Ok(())
 }
 
+/// Fencing precedes message deletion, so a stale vote cannot recreate rows.
+pub(crate) async fn fence_poll(polls: Option<&dyn crate::ports::PollRepository>, message: &Message) -> AppResult<()> {
+    if message.poll.is_some() {
+        polls
+            .ok_or_else(|| crate::PortError::new("poll storage is unavailable"))?
+            .delete(crate::ports::PollKey {
+                channel_id: message.channel_id,
+                message_id: message.id,
+            })
+            .await?;
+    }
+    Ok(())
+}
+
 /// Resolves the caller's access and applies `check`. A delivery mode conflict is re-checked once
 /// against fresh data, because the access answer may be cached for a few seconds after the user
 /// switched the chat's delivery mode.

@@ -18,6 +18,7 @@ const MAX_IDS: usize = 100;
 const MAX_AGE_MS: u64 = 14 * 24 * 60 * 60 * 1000;
 
 pub struct BulkDeleteMessages {
+    polls: Option<Arc<dyn crate::ports::PollRepository>>,
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
     reactions: Arc<dyn ReactionRepository>,
@@ -30,6 +31,7 @@ pub struct BulkDeleteMessages {
 impl BulkDeleteMessages {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            polls: ports.polls.clone(),
             access: ports.access.clone(),
             messages: ports.messages.clone(),
             reactions: ports.reactions.clone(),
@@ -56,6 +58,9 @@ impl BulkDeleteMessages {
             return Ok(Vec::new());
         }
         let deleted: Vec<MessageId> = found.iter().map(|m| m.id).collect();
+        for message in &found {
+            super::support::fence_poll(self.polls.as_deref(), message).await?;
+        }
         self.messages.delete(channel_id, &deleted).await?;
         for message in &found {
             purge_dependents(

@@ -2,6 +2,7 @@
 //! adapters, wires them into the use cases and serves the HTTP interface.
 
 mod config;
+mod polls;
 mod probes;
 mod scheduled;
 mod telemetry;
@@ -93,6 +94,11 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     let reactions = Arc::new(ScyllaReactionRepository::new(session.clone()).await?);
     let read_states =
         Arc::new(ScyllaReadStateRepository::open(session.clone(), config.scylla_read_state_keyspace.as_deref()).await?);
+    let clock = Arc::new(SystemClock);
+    let poll_repository = Arc::new(
+        scylla::ScyllaPollRepository::new(session.clone(), clock.clone(), config.scylla_poll_keyspace.as_deref())
+            .await?,
+    );
     let kafka = Arc::new(KafkaEventSink::connect(config.kafka_brokers.clone()).await?);
 
     let storage = S3AttachmentStorage::new(
@@ -112,7 +118,6 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     let api = InternalApi::new(http, &config.api_internal_url, config.internal_service_token.clone());
     let ids = SnowflakeIds::start(api.clone(), config.worker).await?;
     let authenticator = Arc::new(TokenAuthenticator::new(&config.jwt_public_key, api.clone())?);
-    let clock = Arc::new(SystemClock);
     let urls = AttachmentUrls::new(
         &config.cdn_public_url,
         &config.attachment_signing_key,
@@ -141,6 +146,8 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     )?;
     let media = Arc::new(HttpMediaFetcher::new(outbound.clone()));
     let ports = MessagingPorts {
+        polls: Some(poll_repository.clone()),
+        poll_creation_enabled: config.polls_enabled,
         notification_recipients: Arc::new(HttpNotificationRecipients(api.clone())),
         access: Arc::new(HttpChannelAccess::new(api)),
         messages: messages.clone(),
@@ -163,11 +170,16 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         unfurler: Arc::new(HttpLinkUnfurler::new(outbound)),
     };
     let scheduler = scheduled::Scheduler::start(&config, session.clone(), &ports).await?;
+    let poll_expiry = polls::PollExpiry::start(&ports)?;
     let mut probes: Vec<Arc<dyn ReadinessCheck>> = vec![
         Arc::new(ScyllaProbe(session)),
         Arc::new(ReadStateProbe(read_states)),
         Arc::new(KafkaProbe(kafka)),
         Arc::new(IdProbe(ids)),
+        Arc::new(probes::PollProbe {
+            repository: poll_repository,
+            running: poll_expiry.running.clone(),
+        }),
     ];
     if let Some(scheduler) = &scheduler {
         probes.push(Arc::new(probes::ScheduledProbe {
@@ -214,6 +226,7 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
     if let Some(scheduler) = scheduler {
         scheduler.shutdown().await;
     }
+    poll_expiry.shutdown().await;
     tracing::info!("messages service stopped gracefully");
     Ok(())
 }

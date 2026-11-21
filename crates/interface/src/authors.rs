@@ -113,7 +113,10 @@ mod tests {
         assert_eq!(author.id, "6");
         assert_eq!(author.username, None);
         let json = serde_json::to_value(&author).unwrap();
-        assert_eq!(json, serde_json::json!({"id": "6"}));
+        assert_eq!(
+            json,
+            serde_json::json!({"id": "6", "global_name": null, "avatar": null})
+        );
     }
 
     #[test]

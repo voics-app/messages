@@ -13,6 +13,11 @@ pub use notification_recipients::{NotificationRecipientDto, NotificationRecipien
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
+#[path = "poll/types.rs"]
+pub mod poll;
+
+#[rustfmt::skip]
+#[allow(clippy::all)]
 #[path = "scheduled/types.rs"]
 pub mod scheduled;
 
@@ -25,6 +30,8 @@ pub const ENVELOPE_VERSION: u32 = 1;
 
 /// Dispatch event names published on [`MESSAGE_TOPIC`].
 pub mod event_type {
+    pub const MESSAGE_POLL_VOTE_ADD: &str = "MESSAGE_POLL_VOTE_ADD";
+    pub const MESSAGE_POLL_VOTE_REMOVE: &str = "MESSAGE_POLL_VOTE_REMOVE";
     pub const MESSAGE_CREATE: &str = "MESSAGE_CREATE";
     pub const MESSAGE_UPDATE: &str = "MESSAGE_UPDATE";
     pub const MESSAGE_DELETE: &str = "MESSAGE_DELETE";
@@ -76,7 +83,8 @@ pub struct UserRef {
 }
 
 /// A message author. `id` is always present; the profile fields are filled
-/// in from the api service and left out when it could not be reached.
+/// in from the api service. Nullable display name/avatar remain explicit null;
+/// the other profile fields are left out when the api could not be reached.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorDto {
     pub id: String,
@@ -84,9 +92,9 @@ pub struct AuthorDto {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub discriminator: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default)]
     pub global_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(default)]
     pub avatar: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub bot: Option<bool>,
@@ -121,6 +129,9 @@ pub struct LookedUpUser {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageDto {
+    /// Canonical Poll object, optionally with authoritative results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Value>,
     pub id: String,
     pub channel_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -280,6 +291,12 @@ pub struct ReactionDto {
 /// `POST /channels/{id}/messages`. `nonce` may be a string or an integer.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct CreateMessageRequest {
+    #[serde(
+        default,
+        deserialize_with = "present_poll_create",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub poll: Option<poll::PollCreate>,
     #[serde(default)]
     pub content: Option<String>,
     #[serde(default)]
@@ -348,6 +365,8 @@ pub struct MessageReferenceRequest {
 /// `PATCH /channels/{id}/messages/{mid}`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct EditMessageRequest {
+    #[serde(default, deserialize_with = "present_poll", skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Value>,
     #[serde(default)]
     pub content: Option<String>,
     #[serde(default)]
@@ -357,6 +376,16 @@ pub struct EditMessageRequest {
     pub flags: Option<u32>,
     #[serde(default)]
     pub attachments: Option<Vec<AttachmentMetadataEditDto>>,
+}
+
+fn present_poll<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
+fn present_poll_create<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<poll::PollCreate>, D::Error> {
+    poll::PollCreate::deserialize(deserializer).map(Some)
 }
 
 /// Partial metadata changes for one existing attachment. Files cannot be replaced here.
@@ -468,6 +497,9 @@ pub struct ChannelRoutingResponse {
 /// only to `target_user_ids` and are never stored.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct InternalCreateMessageRequest {
+    /// Present (including null) is rejected; this trusted path cannot bypass poll permissions.
+    #[serde(default, deserialize_with = "present_poll", skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Value>,
     pub author_id: String,
     #[serde(default)]
     pub tts: bool,

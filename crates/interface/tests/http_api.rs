@@ -1,5 +1,8 @@
 //! End-to-end tests of the HTTP surface over in-memory ports.
 
+#[path = "http_api/polls.rs"]
+mod polls;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,6 +38,10 @@ impl Authenticator for FakeAuth {
             "Bearer bob" => Ok(Principal {
                 user_id: BOB,
                 is_bot: false,
+            }),
+            "Bot alice" => Ok(Principal {
+                user_id: ALICE,
+                is_bot: true,
             }),
             _ => Err(AuthError::Invalid),
         }
@@ -952,7 +959,10 @@ async fn an_unavailable_api_degrades_authors_to_ids_without_failing() {
 
     let (status, page) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(page[0]["author"], json!({"id": ALICE.to_string()}));
+    assert_eq!(
+        page[0]["author"],
+        json!({"id": ALICE.to_string(), "global_name": null, "avatar": null})
+    );
 
     let (status, created) = call(
         &app,
@@ -963,7 +973,10 @@ async fn an_unavailable_api_degrades_authors_to_ids_without_failing() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(created["author"], json!({"id": ALICE.to_string()}));
+    assert_eq!(
+        created["author"],
+        json!({"id": ALICE.to_string(), "global_name": null, "avatar": null})
+    );
 }
 
 #[tokio::test]

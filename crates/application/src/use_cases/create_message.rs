@@ -17,7 +17,9 @@ use crate::ports::{
     ActivityRepository, AttachmentStorage, ChannelAccessProvider, EventPublisher, IdGenerator, MessageEvent,
     MessageEventKind, MessageRepository,
 };
+use crate::ports::{Clock, PollKey, PollRepository};
 use crate::views::MessageView;
+use discordy_messages_domain::poll::{PollDefinition, PollDraft};
 
 /// A file uploaded through a presigned URL, referenced by its upload key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +40,7 @@ pub struct ForwardSource {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CreateMessageCommand {
+    pub poll: Option<PollDraft>,
     pub channel_id: ChannelId,
     pub author_id: UserId,
     pub content: String,
@@ -71,6 +74,9 @@ pub struct CreateMessageCommand {
 }
 
 pub struct CreateMessage {
+    polls: Option<Arc<dyn PollRepository>>,
+    poll_creation_enabled: bool,
+    clock: Arc<dyn Clock>,
     access: Arc<dyn ChannelAccessProvider>,
     messages: Arc<dyn MessageRepository>,
     mentions: RecordMentions,
@@ -103,6 +109,9 @@ mod scheduled;
 impl CreateMessage {
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
+            polls: ports.polls.clone(),
+            poll_creation_enabled: ports.poll_creation_enabled,
+            clock: ports.clock.clone(),
             access: ports.access.clone(),
             messages: ports.messages.clone(),
             mentions: RecordMentions::new(ports),
@@ -115,6 +124,18 @@ impl CreateMessage {
     }
 
     pub async fn execute(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
+        if command.poll.is_some() {
+            if command.forward.is_some() {
+                return Err(DomainError::invalid("poll", "polls cannot be forwarded").into());
+            }
+            if !self.poll_creation_enabled {
+                return Err(crate::PortError::new("poll creation is disabled").into());
+            }
+            let access = self.access.refresh(command.channel_id, command.author_id).await?;
+            access.ensure_can_create_poll(!command.attachments.is_empty())?;
+            ensure_tts_permission(&access, command.tts)?;
+            return self.store(&access, command, None).await;
+        }
         if let Some(source) = command.forward {
             return self.forward(source, command).await;
         }
@@ -133,6 +154,11 @@ impl CreateMessage {
     /// delivery mode is still enforced. A webhook is not a guild member, so
     /// its channel is resolved without a user.
     pub async fn execute_internal(&self, command: CreateMessageCommand) -> AppResult<MessageView> {
+        if command.poll.is_some() {
+            return Err(
+                DomainError::invalid("poll", "internal/webhook/interaction poll creation is unsupported").into(),
+            );
+        }
         let access = match command.webhook {
             Some(_) => self.access.channel(command.channel_id).await?,
             None => self.access.access(command.channel_id, command.author_id).await?,
@@ -160,6 +186,9 @@ impl CreateMessage {
             .await?
             .filter(|m| !m.kind.is_system() && m.flags & FLAG_EPHEMERAL == 0)
             .ok_or_else(|| DomainError::invalid("message_reference", "unknown message"))?;
+        if original.poll.is_some() {
+            return Err(DomainError::invalid("message_reference", "polls cannot be forwarded").into());
+        }
         // Forwarding a forward re-forwards the original content.
         let (channel_id, message_id, guild_id, snapshot) = match &original.forward {
             Some(origin) => (
@@ -224,6 +253,19 @@ impl CreateMessage {
     ) -> AppResult<MessageView> {
         let nonce = command.nonce.clone();
         let message = self.compose_message(access, &command, forward).await?;
+        if let Some(poll) = &message.poll {
+            self.polls
+                .as_ref()
+                .ok_or_else(|| crate::PortError::new("poll storage is unavailable"))?
+                .initialize(
+                    PollKey {
+                        channel_id: message.channel_id,
+                        message_id: message.id,
+                    },
+                    poll,
+                )
+                .await?;
+        }
         self.messages.insert(&message).await?;
         self.publish_stored(&message, access, nonce).await;
         Ok(MessageView::without_reactions(message))
@@ -280,6 +322,15 @@ impl CreateMessage {
             }
         }
         let draft = MessageDraft {
+            poll: command
+                .poll
+                .clone()
+                .map(|draft| {
+                    let now = i64::try_from(self.clock.now_unix_ms())
+                        .map_err(|_| discordy_messages_domain::poll::PollError::Exhausted)?;
+                    PollDefinition::new(draft, now)
+                })
+                .transpose()?,
             content: command.content.clone(),
             tts: command.tts,
             attachments: self

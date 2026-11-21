@@ -16,6 +16,7 @@ pub mod message;
 pub mod message_origin;
 pub mod paging;
 pub mod permissions;
+pub mod poll;
 pub mod reaction;
 pub mod read_state;
 pub mod scheduled;

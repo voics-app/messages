@@ -1,0 +1,461 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "MessagePollVoteAddEvent": {
+      "title": "MessagePollVoteAddEvent",
+      "type": "object",
+      "required": [
+        "user_id",
+        "channel_id",
+        "message_id",
+        "answer_id",
+        "answer_ids",
+        "vote_version",
+        "results"
+      ],
+      "properties": {
+        "user_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "channel_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "message_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "guild_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "answer_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "answer_ids": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "description": "Complete post-mutation selection of user_id, including empty after the last removal."
+        },
+        "vote_version": {
+          "$ref": "#/$defs/PollVersion"
+        },
+        "results": {
+          "$ref": "#/$defs/PollResults"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Complete authoritative post-mutation counts and actor selection. Single-choice replacement can emit REMOVE and ADD with identical versions/results. Apply snapshots, never deltas."
+    },
+    "MessagePollVoteRemoveEvent": {
+      "title": "MessagePollVoteRemoveEvent",
+      "type": "object",
+      "required": [
+        "user_id",
+        "channel_id",
+        "message_id",
+        "answer_id",
+        "answer_ids",
+        "vote_version",
+        "results"
+      ],
+      "properties": {
+        "user_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "channel_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "message_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "guild_id": {
+          "$ref": "#/$defs/Snowflake"
+        },
+        "answer_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "answer_ids": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "description": "Complete post-mutation selection of user_id, including empty after the last removal."
+        },
+        "vote_version": {
+          "$ref": "#/$defs/PollVersion"
+        },
+        "results": {
+          "$ref": "#/$defs/PollResults"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Complete authoritative post-mutation counts and actor selection. Single-choice replacement can emit REMOVE and ADD with identical versions/results. Apply snapshots, never deltas."
+    },
+    "Poll": {
+      "title": "Poll",
+      "type": "object",
+      "required": [
+        "question",
+        "answers",
+        "expiry",
+        "allow_multiselect",
+        "layout_type"
+      ],
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/PollQuestion"
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/PollAnswer"
+          }
+        },
+        "expiry": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "allow_multiselect": {
+          "type": "boolean"
+        },
+        "layout_type": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "results": {
+          "$ref": "#/$defs/PollResults"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A Standard message poll. Absent results mean unknown. The immutable definition is never reset by a message edit."
+    },
+    "PollAnswer": {
+      "title": "PollAnswer",
+      "type": "object",
+      "required": [
+        "answer_id",
+        "poll_media"
+      ],
+      "properties": {
+        "answer_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "poll_media": {
+          "$ref": "#/$defs/PollMedia"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PollAnswerCount": {
+      "title": "PollAnswerCount",
+      "type": "object",
+      "required": [
+        "id",
+        "count"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "me_voted": {
+          "type": "boolean",
+          "description": "Absent in public events: unknown, not false."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PollCreate": {
+      "title": "PollCreate",
+      "type": "object",
+      "required": [
+        "question",
+        "answers"
+      ],
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/PollQuestion"
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "required": [
+              "poll_media"
+            ],
+            "properties": {
+              "poll_media": {
+                "$ref": "#/$defs/PollMedia"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 768,
+          "default": 24,
+          "description": "Whole hours from server acceptance."
+        },
+        "allow_multiselect": {
+          "type": "boolean",
+          "default": false
+        },
+        "layout_type": {
+          "type": "integer",
+          "enum": [
+            1
+          ],
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Immutable poll definition for a Standard public message. Answer IDs and expiry are server assigned. Unsupported internal/webhook/interaction, scheduled and forward creation is rejected."
+    },
+    "PollEmoji": {
+      "title": "PollEmoji",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "additionalProperties": false,
+      "description": "Unicode emoji decoration only. Custom IDs are rejected until fresh custom-emoji authorization exists. Runtime also rejects whitespace and ASCII-only names."
+    },
+    "PollMedia": {
+      "title": "PollMedia",
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 55,
+          "pattern": "\\S"
+        },
+        "emoji": {
+          "$ref": "#/$defs/PollEmoji"
+        }
+      },
+      "additionalProperties": false,
+      "description": "An answer label, optionally decorated with a Unicode emoji."
+    },
+    "PollQuestion": {
+      "title": "PollQuestion",
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Plain text. Does not produce mentions or embeds."
+    },
+    "PollResults": {
+      "title": "PollResults",
+      "type": "object",
+      "required": [
+        "version",
+        "is_finalized",
+        "answer_counts"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/PollVersion"
+        },
+        "is_finalized": {
+          "type": "boolean"
+        },
+        "answer_counts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/PollAnswerCount"
+          },
+          "description": "Complete counts, one per immutable answer, including zeros. Unique IDs are checked by the producer."
+        },
+        "vote_version": {
+          "$ref": "#/$defs/PollVersion",
+          "description": "Present only when the current viewer is known. Never overwrite a newer viewer version with absent or older facts."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Authoritative counts. Replace by results version; never add/subtract event deltas."
+    },
+    "PollSnapshot": {
+      "title": "PollSnapshot",
+      "type": "object",
+      "required": [
+        "question",
+        "answers",
+        "expiry",
+        "allow_multiselect",
+        "layout_type",
+        "results"
+      ],
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/PollQuestion"
+        },
+        "answers": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/PollAnswer"
+          }
+        },
+        "expiry": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "allow_multiselect": {
+          "type": "boolean"
+        },
+        "layout_type": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "results": {
+          "$ref": "#/$defs/PollViewerResults"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Viewer-authorized poll snapshot. GET is side-effect-free. Refresh visible polls on foreground/reconnect to repair missed publication."
+    },
+    "PollVersion": {
+      "title": "PollVersion",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18})$",
+      "description": "Monotonic decimal revision, bounded by signed 64-bit storage at runtime. Results versions are scoped to a poll; vote versions to a poll and voter. Compare numerically; exhaustion fails closed."
+    },
+    "PollViewerAnswerCount": {
+      "title": "PollViewerAnswerCount",
+      "type": "object",
+      "required": [
+        "id",
+        "count",
+        "me_voted"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "me_voted": {
+          "type": "boolean",
+          "description": "Absent in public events: unknown, not false."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PollViewerResults": {
+      "title": "PollViewerResults",
+      "type": "object",
+      "required": [
+        "version",
+        "is_finalized",
+        "answer_counts",
+        "vote_version"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/PollVersion"
+        },
+        "is_finalized": {
+          "type": "boolean"
+        },
+        "answer_counts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/PollViewerAnswerCount"
+          },
+          "description": "Complete counts, one per immutable answer, including zeros. Unique IDs are checked by the producer."
+        },
+        "vote_version": {
+          "$ref": "#/$defs/PollVersion",
+          "description": "Present only when the current viewer is known. Never overwrite a newer viewer version with absent or older facts."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Authenticated snapshot with explicit selection for every answer and the viewer revision, including zero for a first-time viewer."
+    },
+    "PollVoteRequest": {
+      "title": "PollVoteRequest",
+      "type": "object",
+      "required": [
+        "expected_vote_version"
+      ],
+      "properties": {
+        "expected_vote_version": {
+          "$ref": "#/$defs/PollVersion"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The revision of your own vote, not the global results. An already-satisfied retry is a no-op; any stale request that changes your selection conflicts."
+    },
+    "Snowflake": {
+      "title": "Snowflake",
+      "description": "A 64-bit Discordy Snowflake ID serialized as a decimal string (42 bits ms since 2026-01-01T00:00:00Z, 10 bits worker, 12 bits sequence).",
+      "type": "string",
+      "pattern": "^[0-9]{1,20}$",
+      "examples": [
+        "1234567890123456789"
+      ]
+    }
+  }
+}

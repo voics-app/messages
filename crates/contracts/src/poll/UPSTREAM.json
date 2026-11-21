@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/discordy-voics/contracts",
+  "revision": "b059649994ae68287ff4ad3dcc4a8d2716404651",
+  "source": "dist/schemas.bundle.json",
+  "roots": [
+    "PollCreate",
+    "PollSnapshot",
+    "PollVoteRequest",
+    "MessagePollVoteAddEvent",
+    "MessagePollVoteRemoveEvent",
+    "Poll"
+  ],
+  "sha256_lf": {
+    "schema.json": "145343d3d6844c73c88486a44a89825167611dc0a2bd135e4baecc16e7cd5db4",
+    "types.rs": "155d821062c6c2fd756fb684bce11b967f858caad2b5220d9befade13edad7bd"
+  }
+}

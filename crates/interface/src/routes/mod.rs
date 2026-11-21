@@ -7,6 +7,7 @@ pub mod health;
 pub mod internal;
 pub mod messages;
 pub mod pins;
+pub mod polls;
 pub mod reactions;
 pub mod scheduled;
 pub mod search;

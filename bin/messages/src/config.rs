@@ -31,6 +31,9 @@ pub struct Config {
     pub scylla_keyspace: String,
     /// Separate vnode keyspace for atomic read state; defaults to <main>_reads.
     pub scylla_read_state_keyspace: Option<String>,
+    /// Creation flag only: existing polls still need readable storage and expiry.
+    pub polls_enabled: bool,
+    pub scylla_poll_keyspace: Option<String>,
     pub scheduled_messages_enabled: bool,
     pub scylla_scheduled_message_keyspace: Option<String>,
     pub api_internal_url: String,
@@ -89,6 +92,8 @@ impl Config {
             scylla_nodes: reader.list("SCYLLA_NODES"),
             scylla_keyspace: reader.optional("SCYLLA_KEYSPACE", "discordy"),
             scylla_read_state_keyspace: reader.value("SCYLLA_READ_STATE_KEYSPACE"),
+            polls_enabled: reader.flag("POLLS_ENABLED", false),
+            scylla_poll_keyspace: reader.optional_identifier("SCYLLA_POLL_KEYSPACE"),
             scheduled_messages_enabled: reader.flag("SCHEDULED_MESSAGES_ENABLED", false),
             scylla_scheduled_message_keyspace: reader.optional_identifier("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE"),
             api_internal_url: reader.url("API_INTERNAL_URL"),
@@ -281,6 +286,8 @@ mod tests {
         assert!(config.jwt_public_key.contains('\n'));
         assert!(!config.scheduled_messages_enabled);
         assert!(config.scylla_scheduled_message_keyspace.is_none());
+        assert!(!config.polls_enabled);
+        assert!(config.scylla_poll_keyspace.is_none());
     }
 
     #[test]
@@ -299,6 +306,21 @@ mod tests {
         let error = load(&vars).err().unwrap().to_string();
         assert!(error.contains("SCHEDULED_MESSAGES_ENABLED"));
         assert!(error.contains("SCYLLA_SCHEDULED_MESSAGE_KEYSPACE"));
+    }
+
+    #[test]
+    fn poll_creation_requires_enablement_and_keyspace_is_validated() {
+        let mut vars = complete();
+        vars.insert("POLLS_ENABLED", "true");
+        vars.insert("SCYLLA_POLL_KEYSPACE", "messages_polls");
+        let config = load(&vars).unwrap();
+        assert!(config.polls_enabled);
+        assert_eq!(config.scylla_poll_keyspace.as_deref(), Some("messages_polls"));
+        vars.insert("POLLS_ENABLED", "maybe");
+        vars.insert("SCYLLA_POLL_KEYSPACE", "bad; DROP KEYSPACE x");
+        let error = load(&vars).err().unwrap().to_string();
+        assert!(error.contains("POLLS_ENABLED"));
+        assert!(error.contains("SCYLLA_POLL_KEYSPACE"));
     }
 
     #[test]

@@ -129,6 +129,7 @@ pub struct MessageDraft {
     pub thread_id: Option<ChannelId>,
     /// Set when forwarding another message.
     pub forward: Option<ForwardOrigin>,
+    pub poll: Option<crate::poll::PollDefinition>,
 }
 
 /// A partial update; `None` leaves the field unchanged.
@@ -179,6 +180,7 @@ pub struct Message {
     pub flags: u32,
     pub edited_at_ms: Option<u64>,
     pub pinned: bool,
+    pub poll: Option<crate::poll::PollDefinition>,
 }
 
 impl Message {
@@ -225,6 +227,7 @@ impl Message {
             thread_id: draft.thread_id.filter(|_| kind == MessageKind::ThreadCreated),
             edited_at_ms: None,
             pinned: false,
+            poll: draft.poll,
         };
         message.validate()?;
         Ok(message)
@@ -340,9 +343,22 @@ impl Message {
             && self.content.trim().is_empty()
             && self.attachments.is_empty()
             && self.embeds.is_empty()
-            && self.forward.is_none();
+            && self.forward.is_none()
+            && self.poll.is_none();
         if is_empty {
             reject("content", "cannot send an empty message");
+        }
+        if self.poll.is_some()
+            && (self.forward.is_some()
+                || self.kind.is_system()
+                || self.webhook.is_some()
+                || self.interaction.is_some()
+                || self.flags & crate::FLAG_EPHEMERAL != 0)
+        {
+            reject("poll", "polls require a normal Standard message or reply");
+        }
+        if let Some(poll) = &self.poll {
+            poll.validate()?;
         }
         if errors.is_empty() {
             Ok(())
