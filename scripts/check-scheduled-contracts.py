@@ -44,12 +44,12 @@ def main():
         DEST.mkdir(parents=True, exist_ok=True)
         (DEST / "schema.json").write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
         subprocess.run([str(args.generator), str(DEST / "schema.json"), str(DEST / "types.rs")], check=True)
-        record = {"repository": "https://github.com/discordy-voics/contracts", "revision": args.import_revision,
+        record = {"repository": "https://github.com/voics-app/contracts", "revision": args.import_revision,
                   "source": "dist/schemas.bundle.json", "roots": ROOTS,
                   "sha256_lf": {name: digest((DEST / name).read_bytes()) for name in FILES}}
         (DEST / "UPSTREAM.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     record = json.loads((DEST / "UPSTREAM.json").read_text(encoding="utf-8"))
-    if record["repository"] != "https://github.com/discordy-voics/contracts" or not re.fullmatch(r"[0-9a-f]{40}", record["revision"]) or tuple(record["roots"]) != ROOTS or set(record["sha256_lf"]) != set(FILES):
+    if record["repository"] != "https://github.com/voics-app/contracts" or not re.fullmatch(r"[0-9a-f]{40}", record["revision"]) or tuple(record["roots"]) != ROOTS or set(record["sha256_lf"]) != set(FILES):
         raise ValueError("invalid scheduled contract provenance")
     for name in FILES:
         if digest((DEST / name).read_bytes()) != record["sha256_lf"][name]:
