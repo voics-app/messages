@@ -17,6 +17,7 @@ mod create_message;
 mod create_upload_slots;
 mod delete_message;
 mod edit_message;
+mod get_guild_message_activity;
 mod get_last_message_id;
 mod get_message;
 mod get_message_history;
@@ -46,6 +47,7 @@ pub use create_message::{AttachmentReference, CreateMessage, CreateMessageComman
 pub use create_upload_slots::{CreateUploadSlots, UploadRequest};
 pub use delete_message::DeleteMessage;
 pub use edit_message::EditMessage;
+pub use get_guild_message_activity::GetGuildMessageActivity;
 pub use get_last_message_id::GetLastMessageId;
 pub use get_message::GetMessage;
 pub use get_message_history::GetMessageHistory;

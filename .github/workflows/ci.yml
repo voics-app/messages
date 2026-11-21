@@ -16,6 +16,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  guild-activity-integration:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/api-53-message-activity'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p discordy-messages-infrastructure --test scylla_repositories --test scheduled_dispatch -- --test-threads=1
+
   announcement-scylla-integration:
     if: github.event_name == 'pull_request'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
