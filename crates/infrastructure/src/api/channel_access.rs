@@ -1,7 +1,8 @@
 //! `GET /internal/v1/channels/{id}/access/{user}` with a short-lived cache.
 //!
 //! Answers (including "not a member" and "unknown channel") are cached for
-//! five seconds; concurrent misses for the same key share one request.
+//! five seconds; concurrent misses for the same key share one request. Private
+//! thread permissions are checked against the API again on every access.
 //! Transport failures are never cached.
 
 use std::sync::Arc;
@@ -19,6 +20,7 @@ use super::{InternalApi, port_error};
 
 pub const ACCESS_CACHE_TTL: Duration = Duration::from_secs(5);
 const ACCESS_CACHE_CAPACITY: u64 = 100_000;
+const PRIVATE_THREAD: u8 = 12;
 
 type Answer = Result<ChannelAccess, AccessError>;
 
@@ -79,10 +81,20 @@ fn to_domain(body: ChannelAccessResponse) -> Result<ChannelAccess, PortError> {
 #[async_trait]
 impl ChannelAccessProvider for HttpChannelAccess {
     async fn access(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
-        self.cache
+        let answer = self
+            .cache
             .try_get_with((channel_id, user_id), self.fetch(channel_id, user_id))
             .await
-            .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?
+            .map_err(|error: Arc<PortError>| AccessError::Unavailable((*error).clone()))?;
+        if matches!(&answer, Ok(access) if access.channel_type == PRIVATE_THREAD)
+            || matches!(&answer, Err(AccessError::NotMember))
+        {
+            return self
+                .fetch(channel_id, user_id)
+                .await
+                .map_err(AccessError::Unavailable)?;
+        }
+        answer
     }
 
     async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
