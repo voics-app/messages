@@ -15,7 +15,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked -p discordy-messages-infrastructure --test api_clients private_thread_access_rechecks_revocation_and_rejoin_without_waiting_for_cache
   thread-lock:
-    runs-on: vm-runner
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
