@@ -42,6 +42,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0013_announcement_publication",
         include_str!("../../../../migrations/0013_announcement_publication.cql"),
     ),
+    (
+        "0014_guild_message_activity",
+        include_str!("../../../../migrations/0014_guild_message_activity.cql"),
+    ),
 ];
 
 /// Creates the keyspace when missing (replication factor 1: the platform

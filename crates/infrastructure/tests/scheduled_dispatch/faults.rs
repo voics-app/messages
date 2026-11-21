@@ -9,7 +9,7 @@ use discordy_messages_application::{
     ports::{BucketQuery, MessageRepository, scheduled::*},
 };
 use discordy_messages_domain::scheduled::{ScheduleChange, ScheduledMessage};
-use discordy_messages_domain::{ChannelId, Message, MessageId, UserId};
+use discordy_messages_domain::{ChannelId, GuildId, Message, MessageId, UserId};
 
 pub struct ObservedMessages {
     pub inner: Arc<dyn MessageRepository>,
@@ -19,6 +19,20 @@ pub struct ObservedMessages {
 
 #[async_trait]
 impl MessageRepository for ObservedMessages {
+    async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError> {
+        self.inner.guild_activity_source_initialized_ms().await
+    }
+    async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError> {
+        self.inner.guild_message_count(guild_id, utc_day).await
+    }
+    async fn insert_scoped(&self, message: &Message, guild_id: Option<GuildId>) -> Result<(), PortError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.insert_scoped(message, guild_id).await?;
+        if self.lose_result.swap(false, Ordering::SeqCst) {
+            return Err(PortError::new("fixture lost successful message-write result"));
+        }
+        Ok(())
+    }
     async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError> {
         self.inner.mark_crossposted(channel_id, message_id).await
     }

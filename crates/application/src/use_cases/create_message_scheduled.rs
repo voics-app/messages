@@ -47,7 +47,12 @@ impl ScheduledDelivery for CreateMessage {
             Err(_) => return DispatchOutcome::Failed(ScheduledFailure::DependencyUnavailable),
         }
         // One storage invocation only: a timeout or lost acknowledgement can mean the message was stored.
-        match tokio::time::timeout(INSERT_TIMEOUT, self.messages.insert(&prepared.message)).await {
+        match tokio::time::timeout(
+            INSERT_TIMEOUT,
+            self.messages.insert_scoped(&prepared.message, prepared.access.guild_id),
+        )
+        .await
+        {
             Ok(Ok(())) => DispatchOutcome::Sent,
             Ok(Err(_)) | Err(_) => DispatchOutcome::Unknown,
         }
