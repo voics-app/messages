@@ -64,6 +64,8 @@ fn attachment_dto(channel_id: ChannelId, attachment: &Attachment, urls: &Attachm
         content_type: attachment.content_type.clone(),
         width: attachment.width,
         height: attachment.height,
+        duration_secs: attachment.duration_ms.map(|ms| f64::from(ms) / 1000.0),
+        waveform: attachment.waveform.clone(),
         description: attachment.description.clone(),
         // Explicit zero overrides a legacy SPOILER_ filename after a metadata edit.
         flags: Some(attachment.flags),

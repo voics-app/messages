@@ -186,6 +186,57 @@ async fn tts_is_persisted_returned_and_gated_by_permission() {
 }
 
 #[tokio::test]
+async fn voice_message_permission_validation_and_history() {
+    let harness = Harness::new();
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/77/voice.ogg"), b"audio");
+    let app = app(&harness);
+    let payload = json!({"flags": 8192, "attachments": [{
+        "uploaded_filename": format!("attachments/{CHANNEL}/77/voice.ogg"),
+        "duration_secs": 1.5, "waveform": "AQID"
+    }]});
+    harness.access.set_permissions(MEMBER);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(payload.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    harness
+        .access
+        .set_permissions(MEMBER | discordy_messages_domain::Permissions::SEND_VOICE_MESSAGES);
+    let (status, created) = call(&app, Method::POST, &messages_uri(), Some(ALICE_TOKEN), Some(payload)).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["flags"], 8192);
+    assert_eq!(created["attachments"][0]["duration_secs"], 1.5);
+    assert_eq!(created["attachments"][0]["waveform"], "AQID");
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["attachments"][0]["waveform"], "AQID");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"uploaded_filename": format!("attachments/{CHANNEL}/77/voice.ogg"), "duration_secs": 1.5, "waveform": "AQID"}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"flags":8192,"content":"invalid"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn attachment_metadata_edits_preserve_files_and_can_clear_a_spoiler() {
     let harness = Harness::new();
     harness

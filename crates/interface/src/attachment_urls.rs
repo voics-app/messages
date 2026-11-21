@@ -201,6 +201,8 @@ mod tests {
             size: 1,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }
