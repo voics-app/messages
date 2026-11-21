@@ -1,5 +1,5 @@
 {
-  "repository": "https://github.com/discordy-voics/contracts",
+  "repository": "https://github.com/voics-app/contracts",
   "revision": "8d1fdba403ff83d509335ff769fb9a4019853efa",
   "source": "dist/schemas.bundle.json",
   "roots": [
