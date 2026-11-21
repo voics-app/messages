@@ -177,7 +177,7 @@ is reported at once.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
-The [persistent polls implementation](docs/polls.md) describes the current draft
+The [persistent polls implementation](docs/polls.md) describes the
 scope, authorization, storage boundaries and contract validation commands.
 
 ## Git hooks

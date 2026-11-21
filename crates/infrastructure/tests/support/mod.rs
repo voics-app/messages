@@ -62,7 +62,7 @@ pub async fn start_scylla(keyspace: &str) -> Scylla {
         ])
         .with_mapped_port(0, 9042.tcp())
         .with_container_name(container_name("scylla"))
-        .with_startup_timeout(Duration::from_secs(240))
+        .with_startup_timeout(Duration::from_secs(600))
         .start()
         .await
         .expect("start scylla");

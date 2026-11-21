@@ -1,7 +1,7 @@
 # Persistent polls
 
 The protocol and rollout requirements are defined in docs ADR0029 and
-`specs/2026-11-18-polls.md`; the canonical schemas are contracts PR54. This draft
+`specs/2026-11-18-polls.md`; the canonical schemas are contracts PR54. This implementation
 connects creation, immutable message storage, voting, author and automatic expiry,
 deletion fences and HTTP/event serialization. Creation defaults to disabled;
 consumer rollout and complete client/gateway acceptance remain separate gates.
