@@ -39,6 +39,10 @@ fn message(channel: Snowflake, id: Snowflake, content: &str) -> Message {
 #[tokio::test]
 async fn scylla_adapters_against_a_real_node() {
     if !support::cpu_supports_scylla() {
+        assert!(
+            std::env::var_os("REQUIRE_SCYLLA_CPU").is_none(),
+            "this job requires a Scylla-capable CPU"
+        );
         eprintln!("skipping: ScyllaDB needs SSE4.2 and PCLMULQDQ, which this CPU does not expose");
         return;
     }
@@ -56,6 +60,7 @@ async fn scylla_adapters_against_a_real_node() {
     let activity = ScyllaActivityRepository::new(Arc::clone(&session)).await.unwrap();
 
     message_crud(messages.as_ref()).await;
+    publication_marker_survives_stale_edits(messages.as_ref()).await;
     system_message_payloads(messages.as_ref()).await;
     bucketed_history(Arc::clone(&messages), Arc::clone(&reactions)).await;
     last_message_id_never_regresses(messages.as_ref()).await;
@@ -63,6 +68,21 @@ async fn scylla_adapters_against_a_real_node() {
     pins_round_trip(&pins).await;
     read_states_round_trip(&read_states).await;
     activity_counts(&activity).await;
+}
+
+async fn publication_marker_survives_stale_edits(repo: &ScyllaMessageRepository) {
+    let channel = id_at(50, 0);
+    let mut stale = message(channel, id_at(BUCKET_SIZE_MS * 2, 111), "before");
+    repo.insert(&stale).await.unwrap();
+    assert!(repo.mark_crossposted(channel, stale.id).await.unwrap());
+    stale.content = "after".into();
+    repo.update(&stale).await.unwrap();
+    let stored = repo.find(channel, stale.id).await.unwrap().unwrap();
+    assert_eq!(stored.content, "after");
+    assert_ne!(stored.flags & discordy_messages_domain::FLAG_CROSSPOSTED, 0);
+    repo.delete(channel, &[stale.id]).await.unwrap();
+    assert!(!repo.mark_crossposted(channel, stale.id).await.unwrap());
+    assert!(repo.find(channel, stale.id).await.unwrap().is_none());
 }
 
 async fn message_crud(repo: &ScyllaMessageRepository) {

@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
         );
 
     let internal = Router::new()
+        .route("/channels/{channel_id}/crossposts", post(internal::deliver_crosspost))
         .route("/channels/{channel_id}/messages", post(internal::create_message))
         .route(
             "/channels/{channel_id}/messages/{message_id}",
@@ -75,6 +76,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/channels/{channel_id}/messages/{message_id}/call",
             patch(internal::update_call),
+        )
+        .route(
+            "/channels/{channel_id}/messages/{message_id}/crossposted",
+            post(internal::mark_crossposted),
         )
         .route("/channels/{channel_id}/last-message-id", get(internal::last_message_id))
         .route("/users/{user_id}/read-states", get(internal::read_states))

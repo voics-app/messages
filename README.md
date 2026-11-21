@@ -183,3 +183,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 ## Git hooks
 
 Tests run locally, not in CI. Install [lefthook](https://github.com/evilmartians/lefthook) once and run `make hooks` (or `lefthook install`) to enable the pre-push hook in `lefthook.yml`: it runs this repository's lint and unit tests before every push. CI repeats only the slim gate on pull requests. Skip once with `LEFTHOOK=0 git push`.
+
+## Announcement publication
+
+The draft announcement flow accepts trusted internal publication markers and
+follower deliveries. The source marker is stored separately from editable
+message fields, so an ordinary edit cannot clear it. Destination messages use
+a reserved ID, carry IS_CROSSPOST and copy attachments into the target channel.
+The API journal owns delivery claims and uncertain-result reconciliation.
+The bridge is not yet approved for rollout.
+
