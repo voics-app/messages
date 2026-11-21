@@ -183,7 +183,8 @@ async fn run(config: Config, metrics: discordy_messages_interface::metrics::Metr
         media,
         probes,
         metrics,
-    );
+    )
+    .with_gif_media_hosts(config.gif_media_hosts.clone());
     if let Some(scheduler) = &scheduler {
         state = state.with_scheduled(scheduler.service.clone());
     }

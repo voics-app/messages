@@ -27,6 +27,8 @@ pub struct AttachmentReference {
     pub description: Option<String>,
     /// Requested `ATTACHMENT_FLAG_*` bits (only the spoiler bit is kept).
     pub flags: u32,
+    pub duration_ms: Option<u32>,
+    pub waveform: Option<String>,
 }
 
 /// The message to forward (message_reference type FORWARD).
@@ -34,6 +36,18 @@ pub struct AttachmentReference {
 pub struct ForwardSource {
     pub channel_id: ChannelId,
     pub message_id: MessageId,
+}
+
+/// Trusted, journalled delivery of one announcement into a follower channel.
+pub struct CrosspostDelivery {
+    pub source_channel: ChannelId,
+    pub target_channel: ChannelId,
+    pub message_id: MessageId,
+    pub webhook_id: UserId,
+    pub webhook_name: String,
+    pub content: String,
+    pub embeds: Vec<String>,
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -101,6 +115,57 @@ mod mention_tests;
 mod scheduled;
 
 impl CreateMessage {
+    pub async fn deliver_crosspost(&self, command: CrosspostDelivery) -> AppResult<MessageView> {
+        let access = self.access.channel(command.target_channel).await?;
+        if access.guild_id.is_none() || access.channel_type != 0 {
+            return Err(DomainError::invalid("channel_id", "must be a guild text channel").into());
+        }
+        access.ensure_standard_delivery()?;
+        if let Some(existing) = self.messages.find(command.target_channel, command.message_id).await? {
+            if existing.webhook.as_ref().map(|webhook| webhook.webhook_id) == Some(command.webhook_id)
+                && existing.flags & discordy_messages_domain::FLAG_IS_CROSSPOST != 0
+            {
+                return Ok(MessageView::without_reactions(existing));
+            }
+            return Err(DomainError::invalid("message_id", "reserved identity is already in use").into());
+        }
+        for attachment in &command.attachments {
+            if !self
+                .storage
+                .copy(
+                    &attachment.key(command.source_channel),
+                    &attachment.key(command.target_channel),
+                )
+                .await?
+            {
+                return Err(DomainError::invalid("attachments", "source attachment is unavailable").into());
+            }
+        }
+        let draft = MessageDraft {
+            content: command.content,
+            embeds: command.embeds,
+            attachments: command.attachments,
+            flags: discordy_messages_domain::FLAG_IS_CROSSPOST,
+            webhook: Some(WebhookAuthor {
+                webhook_id: command.webhook_id,
+                username: Some(command.webhook_name),
+                avatar_url: None,
+            }),
+            ..MessageDraft::default()
+        };
+        let mut message = Message::compose(
+            command.message_id,
+            command.target_channel,
+            command.webhook_id,
+            draft,
+            false,
+        )?;
+        // A publisher cannot notify arbitrary users in the destination server.
+        message.mentions = Default::default();
+        self.messages.insert(&message).await?;
+        self.publish_stored(&message, &access, None).await;
+        Ok(MessageView::without_reactions(message))
+    }
     pub fn new(ports: &MessagingPorts) -> Self {
         Self {
             access: ports.access.clone(),
@@ -124,6 +189,13 @@ impl CreateMessage {
         // a cached positive answer.
         let access = self.access.refresh(command.channel_id, command.author_id).await?;
         access.ensure_can_send(with_attachments)?;
+        if command.flags & discordy_messages_domain::FLAG_IS_VOICE_MESSAGE != 0
+            && !access
+                .permissions
+                .has(discordy_messages_domain::Permissions::SEND_VOICE_MESSAGES)
+        {
+            return Err(DomainError::MissingPermissions.into());
+        }
         ensure_tts_permission(&access, command.tts)?;
         self.store(&access, command, None).await
     }
@@ -143,6 +215,70 @@ impl CreateMessage {
             return self.relay_ephemeral(&access, command).await;
         }
         self.store(&access, command, None).await
+    }
+
+    /// Idempotently stores a reserved forum opening and a durable marker in the
+    /// same Scylla partition. Replays never rewrite an existing or deleted opener.
+    pub async fn execute_forum_start(
+        &self,
+        channel_id: ChannelId,
+        author_id: discordy_messages_domain::UserId,
+        message_id: MessageId,
+        content: String,
+    ) -> AppResult<MessageView> {
+        use sha2::{Digest, Sha256};
+        if channel_id == message_id
+            || discordy_messages_domain::Bucket::of(channel_id) != discordy_messages_domain::Bucket::of(message_id)
+        {
+            return Err(DomainError::invalid(
+                "message_id",
+                "forum opener must have a distinct ID in the channel partition",
+            )
+            .into());
+        }
+        let access = self.access.refresh(channel_id, author_id).await?;
+        // The internal API already checked the actor and permission. Pending
+        // posts deliberately expose no normal channel permissions.
+        access.ensure_standard_delivery()?;
+        let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let command = CreateMessageCommand {
+            channel_id,
+            author_id,
+            content,
+            ..CreateMessageCommand::default()
+        };
+        let mut message = self.compose_message(&access, &command, None).await?;
+        message.id = message_id;
+        let mut marker = message.clone();
+        marker.id = channel_id;
+        marker.content = digest.clone();
+        marker.flags = discordy_messages_domain::FORUM_MARKER_FLAG;
+        marker.reply_to = Some(message_id);
+        marker.mentions = Default::default();
+        marker.attachments.clear();
+        marker.embeds.clear();
+        marker.components.clear();
+        if self.messages.insert_forum_once(&marker, &message).await? {
+            // The API transaction publishes MESSAGE_CREATE through its durable outbox
+            // once it has confirmed storage and made the thread visible.
+            self.record_side_effects(&message, access.guild_id).await;
+            self.unfurl.spawn(&message);
+            return Ok(MessageView::without_reactions(message));
+        }
+        match self.messages.forum_marker(channel_id).await? {
+            Some((author, id, hash)) if author == author_id && id == message_id && hash == digest => {}
+            _ => {
+                return Err(
+                    DomainError::invalid("message_id", "forum reservation conflicts with an existing record").into(),
+                );
+            }
+        }
+        let existing = self
+            .messages
+            .find(channel_id, message_id)
+            .await?
+            .ok_or(DomainError::UnknownMessage)?;
+        Ok(MessageView::without_reactions(existing))
     }
 
     /// Forwards a message: the caller needs to read the source and to send in
@@ -359,6 +495,8 @@ impl CreateMessage {
                 size: stored.size,
                 width: None,
                 height: None,
+                duration_ms: reference.duration_ms,
+                waveform: reference.waveform.clone(),
                 description: validate_description(reference.description.as_deref())?,
                 flags: upload_flags(&key.filename, reference.flags),
                 filename: key.filename,
@@ -443,6 +581,60 @@ mod tests {
                 nonce: Some("n-1".into())
             }
         );
+    }
+
+    #[tokio::test]
+    async fn forum_start_uses_reserved_id_and_author() {
+        let h = Harness::new();
+        let id = Snowflake::new((101 << 22) + 99);
+        let view = CreateMessage::new(&h.ports)
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        assert_eq!(view.message.id, id);
+        let stored = h.messages.find(CHANNEL, id).await.unwrap().unwrap();
+        assert_eq!(stored.author_id, ALICE);
+        assert_eq!(stored.content, "opening");
+        assert!(h.events.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn forum_start_replay_preserves_existing_and_deleted_openers() {
+        let h = Harness::new();
+        let id = Snowflake::new(CHANNEL.value() + 1);
+        let use_case = CreateMessage::new(&h.ports);
+        use_case
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        let replay = use_case
+            .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+            .await
+            .unwrap();
+        assert_eq!(replay.message.id, id);
+        assert!(h.events.events.lock().unwrap().is_empty());
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, ALICE, id, "different".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, BOB, id, "opening".into())
+                .await
+                .is_err()
+        );
+        h.messages.delete(CHANNEL, &[id]).await.unwrap();
+        assert!(
+            use_case
+                .execute_forum_start(CHANNEL, ALICE, id, "opening".into())
+                .await
+                .is_err()
+        );
+        assert!(h.messages.find(CHANNEL, id).await.unwrap().is_none());
+        assert!(h.messages.find(CHANNEL, CHANNEL).await.unwrap().is_none());
+        assert!(h.messages.forum_marker(CHANNEL).await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -657,6 +849,8 @@ mod tests {
             uploaded_filename: format!("attachments/{CHANNEL}/77/cat.png"),
             description: None,
             flags: 0,
+            duration_ms: None,
+            waveform: None,
         }];
         assert!(CreateMessage::new(&h.ports).execute(cmd.clone()).await.is_err());
 
@@ -678,6 +872,8 @@ mod tests {
             uploaded_filename: format!("attachments/{CHANNEL}/77/{name}"),
             description: description.map(str::to_owned),
             flags,
+            duration_ms: None,
+            waveform: None,
         };
         let mut cmd = command("");
         cmd.attachments = vec![reference("a.png", Some(" a red cat "), 8)];
@@ -969,6 +1165,8 @@ mod tests {
             size: 5,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }];
@@ -1003,6 +1201,8 @@ mod tests {
             size: 5,
             width: None,
             height: None,
+            duration_ms: None,
+            waveform: None,
             description: None,
             flags: 0,
         }];

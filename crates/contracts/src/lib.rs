@@ -244,7 +244,7 @@ pub struct UpdateCallRequest {
     pub ended_timestamp: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachmentDto {
     pub id: String,
     pub filename: String,
@@ -257,6 +257,10 @@ pub struct AttachmentDto {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub duration_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub waveform: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub description: Option<String>,
     /// `AttachmentFlags` bit set; explicit zero overrides a SPOILER_ filename.
@@ -317,7 +321,7 @@ pub struct AllowedMentionsDto {
     pub replied_user: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct AttachmentReferenceDto {
     #[serde(default)]
     pub id: Option<Value>,
@@ -330,6 +334,10 @@ pub struct AttachmentReferenceDto {
     /// `AttachmentFlags` bits; only IS_SPOILER (8) is kept.
     #[serde(default)]
     pub flags: Option<u32>,
+    #[serde(default)]
+    pub duration_secs: Option<f64>,
+    #[serde(default)]
+    pub waveform: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -516,6 +524,49 @@ pub struct InternalCreateMessageRequest {
     /// The thread a type 18 message announces.
     #[serde(default)]
     pub thread_id: Option<String>,
+}
+
+/// Internal forum start command. API reserves the message ID and sends this at most once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumStartRequest {
+    pub author_id: String,
+    pub message_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalForumSummaryRequest {
+    pub channel_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InternalCrosspostRequest {
+    pub source_channel_id: String,
+    pub message_id: String,
+    pub webhook_id: String,
+    pub webhook_name: String,
+    pub snapshot: CrosspostSnapshot,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrosspostSnapshot {
+    pub content: String,
+    #[serde(default)]
+    pub embeds: Vec<Value>,
+    #[serde(default)]
+    pub attachments: Vec<CrosspostAttachment>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrosspostAttachment {
+    pub id: String,
+    pub filename: String,
+    pub size: u64,
+    pub content_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub description: Option<String>,
+    pub flags: Option<u32>,
 }
 
 /// api: `POST /internal/v1/auth/introspect`.

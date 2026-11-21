@@ -144,6 +144,21 @@ impl ChannelAccess {
         }
     }
 
+    /// Only a visible, stored announcement can be published. The author needs
+    /// permission to send; publishing someone else's message needs moderation.
+    pub fn ensure_can_publish(&self, actor: UserId, author: UserId) -> Result<(), DomainError> {
+        self.ensure_can_view()?;
+        if self.guild_id.is_none() || self.channel_type != 5 {
+            return Err(DomainError::invalid("channel_id", "must be an announcement channel"));
+        }
+        self.ensure_standard_delivery()?;
+        if actor == author {
+            self.ensure_can_send(false)
+        } else {
+            self.ensure_can_manage_messages()
+        }
+    }
+
     /// The author or a moderator may hide a message's link previews.
     pub fn ensure_can_suppress_embeds(&self, actor: UserId, author: UserId) -> Result<(), DomainError> {
         self.ensure_can_delete(actor, author)
@@ -183,6 +198,36 @@ mod tests {
     const VIEW: u64 = Permissions::VIEW_CHANNEL;
     const SEND: u64 = Permissions::SEND_MESSAGES;
     const HISTORY: u64 = Permissions::READ_MESSAGE_HISTORY;
+
+    #[test]
+    fn publishing_requires_announcement_access_and_author_or_moderator_permission() {
+        let alice = Snowflake::new(1);
+        let bob = Snowflake::new(2);
+        let mut channel = guild(VIEW | SEND);
+        channel.channel_type = 5;
+        assert!(channel.ensure_can_publish(alice, alice).is_ok());
+        assert_eq!(
+            channel.ensure_can_publish(bob, alice),
+            Err(DomainError::MissingPermissions)
+        );
+        channel.permissions = Permissions::new(VIEW | Permissions::MANAGE_MESSAGES);
+        assert!(channel.ensure_can_publish(bob, alice).is_ok());
+        assert_eq!(
+            channel.ensure_can_publish(alice, alice),
+            Err(DomainError::MissingPermissions)
+        );
+        channel.channel_type = 0;
+        assert!(matches!(
+            channel.ensure_can_publish(bob, alice),
+            Err(DomainError::InvalidForm(_))
+        ));
+        channel.channel_type = 5;
+        channel.delivery_mode = DeliveryMode::Ephemeral;
+        assert!(matches!(
+            channel.ensure_can_publish(bob, alice),
+            Err(DomainError::DeliveryModeConflict(_))
+        ));
+    }
 
     fn guild(bits: u64) -> ChannelAccess {
         ChannelAccess {

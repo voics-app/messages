@@ -3,6 +3,11 @@
 
 use crate::Snowflake;
 
+/// The source announcement has been published to its followers.
+pub const FLAG_CROSSPOSTED: u32 = 1 << 0;
+/// This message was delivered from a followed announcement channel.
+pub const FLAG_IS_CROSSPOST: u32 = 1 << 1;
+
 /// Discord's SUPPRESS_EMBEDS: the message shows no link previews.
 pub const FLAG_SUPPRESS_EMBEDS: u32 = 1 << 2;
 
@@ -10,6 +15,7 @@ pub const FLAG_SUPPRESS_EMBEDS: u32 = 1 << 2;
 pub const FLAG_EPHEMERAL: u32 = 1 << 6;
 /// `@silent`: no push, desktop or unread-mention notification for the message.
 pub const FLAG_SUPPRESS_NOTIFICATIONS: u32 = 1 << 12;
+pub const FLAG_IS_VOICE_MESSAGE: u32 = 1 << 13;
 
 /// Set on messages posted through a webhook. The message's author is the
 /// webhook itself, so `username` and `avatar_url` override its display.
@@ -30,6 +36,12 @@ pub struct InteractionLink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crosspost_flags_match_the_wire_values() {
+        assert_eq!(FLAG_CROSSPOSTED, 1);
+        assert_eq!(FLAG_IS_CROSSPOST, 2);
+    }
 
     #[test]
     fn ephemeral_is_discords_flag_64() {

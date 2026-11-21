@@ -54,8 +54,8 @@ impl ReadinessCheck for Probe {
     }
 }
 
-fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
-    router(AppState::new(
+fn state_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> AppState {
+    AppState::new(
         &harness.ports,
         Arc::new(FakeAuth),
         InternalToken::new(INTERNAL),
@@ -68,7 +68,11 @@ fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
         harness.media.clone(),
         probes,
         test_metrics(),
-    ))
+    )
+}
+
+fn app_with(harness: &Harness, probes: Vec<Arc<dyn ReadinessCheck>>) -> Router {
+    router(state_with(harness, probes))
 }
 
 /// Per-test recorder, installed as this thread's default (tests run on current-thread runtimes).
@@ -179,6 +183,57 @@ async fn tts_is_persisted_returned_and_gated_by_permission() {
     )
     .await;
     assert_eq!(normal["tts"], false);
+}
+
+#[tokio::test]
+async fn voice_message_permission_validation_and_history() {
+    let harness = Harness::new();
+    harness
+        .storage
+        .put_body(&format!("attachments/{CHANNEL}/77/voice.ogg"), b"audio");
+    let app = app(&harness);
+    let payload = json!({"flags": 8192, "attachments": [{
+        "uploaded_filename": format!("attachments/{CHANNEL}/77/voice.ogg"),
+        "duration_secs": 1.5, "waveform": "AQID"
+    }]});
+    harness.access.set_permissions(MEMBER);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(payload.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    harness
+        .access
+        .set_permissions(MEMBER | discordy_messages_domain::Permissions::SEND_VOICE_MESSAGES);
+    let (status, created) = call(&app, Method::POST, &messages_uri(), Some(ALICE_TOKEN), Some(payload)).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["flags"], 8192);
+    assert_eq!(created["attachments"][0]["duration_secs"], 1.5);
+    assert_eq!(created["attachments"][0]["waveform"], "AQID");
+    let (_, history) = call(&app, Method::GET, &messages_uri(), Some(ALICE_TOKEN), None).await;
+    assert_eq!(history[0]["attachments"][0]["waveform"], "AQID");
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"attachments": [{"uploaded_filename": format!("attachments/{CHANNEL}/77/voice.ogg"), "duration_secs": 1.5, "waveform": "AQID"}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &messages_uri(),
+        Some(ALICE_TOKEN),
+        Some(json!({"flags":8192,"content":"invalid"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -372,7 +427,7 @@ async fn silent_flag_is_kept_and_replied_user_false_drops_the_reply_ping() {
         &messages_uri(),
         Some(ALICE_TOKEN),
         // EPHEMERAL (64) is not client-settable: only SUPPRESS_NOTIFICATIONS survives.
-        Some(json!({"content": "shh <@11>", "flags": 4096 | 64})),
+        Some(json!({"content": "shh <@11>", "flags": 4096 | 64 | 1 | 2})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -579,6 +634,43 @@ async fn internal_read_state_header_certifies_an_empty_account() {
 }
 
 #[tokio::test]
+async fn internal_media_signing_requires_service_token_and_https() {
+    let harness = Harness::new();
+    let closed = app(&harness);
+    let uri = "/internal/v1/media/sign";
+    let body = json!({"urls": ["https://example.test/cat.gif"]});
+    assert_eq!(
+        post_internal(&closed, uri, None, body.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        post_internal(&closed, uri, Some(INTERNAL), body.clone()).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let app = router(state_with(&harness, vec![]).with_gif_media_hosts(vec!["example.test".into()]));
+    let (status, result) = post_internal(&app, uri, Some(INTERNAL), body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(result["urls"][0].as_str().unwrap().contains("/external/"));
+    assert_eq!(
+        post_internal(&app, uri, Some(INTERNAL), json!({"urls": ["http://localhost/private"]}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        post_internal(
+            &app,
+            uri,
+            Some(INTERNAL),
+            json!({"urls": ["https://other.test/cat.gif"]})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn internal_create_posts_as_the_author_override_without_a_user_check() {
     let harness = Harness::new();
     harness.access.set_permissions(Permissions::VIEW_CHANNEL);
@@ -642,6 +734,53 @@ async fn internal_webhook_posts_are_authored_by_the_webhook_with_overrides() {
     assert_eq!(created["webhook_id"], "900");
     assert_eq!(created["author_override"]["username"], "Relay");
     assert_eq!(created["author_override"]["avatar_url"], "https://cdn.test/a.png");
+}
+
+#[tokio::test]
+async fn publication_marker_requires_internal_authentication() {
+    let harness = Harness::new();
+    let mut access = guild_access(MEMBER);
+    access.channel_type = 5;
+    *harness.access.channel.lock().unwrap() = Ok(access);
+    let original = harness.seed(ALICE, "news").await;
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages/{}/crossposted", original.id);
+    let (status, _) = post_internal(&app, &uri, None, json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, marked) = post_internal(&app, &uri, Some(INTERNAL), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(marked["flags"].as_u64().unwrap() & 1, 1);
+}
+
+#[tokio::test]
+async fn trusted_crosspost_delivers_snapshot_with_reserved_identity() {
+    let harness = Harness::new();
+    *harness.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+    harness.storage.put_body("attachments/900/777/news.png", b"image");
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/crossposts");
+    let payload = json!({"source_channel_id":"900", "message_id":"901", "webhook_id":"902", "webhook_name":"News", "snapshot":{"content":"hello @everyone", "embeds":[], "attachments":[{"id":"777", "filename":"news.png", "size":5}]}});
+    let (status, _) = post_internal(&app, &uri, None, payload.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, delivered) = post_internal(&app, &uri, Some(INTERNAL), payload.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(delivered["id"], "901");
+    assert_eq!(delivered["webhook_id"], "902");
+    assert_eq!(delivered["flags"].as_u64().unwrap() & 2, 2);
+    assert_eq!(delivered["mention_everyone"], false);
+    assert_eq!(delivered["attachments"][0]["id"], "777");
+    assert!(
+        harness
+            .storage
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&format!("attachments/{CHANNEL}/777/news.png"))
+    );
+    let (status, repeated) = post_internal(&app, &uri, Some(INTERNAL), payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(repeated["id"], delivered["id"]);
+    assert_eq!(harness.events.kinds().len(), 1);
 }
 
 #[tokio::test]

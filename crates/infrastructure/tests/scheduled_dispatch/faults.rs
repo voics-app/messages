@@ -19,6 +19,9 @@ pub struct ObservedMessages {
 
 #[async_trait]
 impl MessageRepository for ObservedMessages {
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError> {
+        self.inner.mark_crossposted(channel_id, message_id).await
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.insert(message).await?;

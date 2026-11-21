@@ -34,16 +34,25 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_message_tts",
         include_str!("../../../../migrations/0007_message_tts.cql"),
     ),
+    (
+        "0011_voice_attachment",
+        include_str!("../../../../migrations/0011_voice_attachment.cql"),
+    ),
+    (
+        "0013_announcement_publication",
+        include_str!("../../../../migrations/0013_announcement_publication.cql"),
+    ),
 ];
 
 /// Creates the keyspace when missing (replication factor 1: the platform
-/// runs a single ScyllaDB node), switches to it and applies pending
+/// runs a single ScyllaDB node, tablets off because the publication marker and
+/// read states use lightweight transactions), switches to it and applies pending
 /// migrations.
 pub async fn migrate(session: &Session, keyspace: &str) -> Result<(), PortError> {
     validate_identifier(keyspace)?;
     let create_keyspace = format!(
         "CREATE KEYSPACE IF NOT EXISTS {keyspace} WITH replication = \
-         {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+         {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}} AND tablets = {{'enabled': false}}"
     );
     session.query_unpaged(create_keyspace, ()).await.map_err(port_error)?;
     session.await_schema_agreement().await.map_err(port_error)?;

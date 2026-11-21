@@ -41,6 +41,31 @@ impl GetMessageHistory {
         self.decorate(channel_id, page, viewer).await
     }
 
+    /// Exact stored count and first/latest messages for an authorized forum feed.
+    pub async fn forum_summary(
+        &self,
+        channel_id: ChannelId,
+    ) -> AppResult<(u64, Option<Message>, Option<discordy_messages_domain::MessageId>)> {
+        let Some(newest) = self.history.last_message_id(channel_id).await? else {
+            return Ok((0, None, None));
+        };
+        let limit = PageLimit::parse(Some(1))?;
+        let first = self
+            .page(channel_id, HistoryCursor::After(channel_id), limit)
+            .await?
+            .pop();
+        let latest = self
+            .page(channel_id, HistoryCursor::Latest, limit)
+            .await?
+            .first()
+            .map(|m| m.id);
+        let mut count = 0u64;
+        for bucket in Bucket::of(channel_id).ascending_to(Bucket::of(newest)) {
+            count += self.history.count_bucket(channel_id, bucket).await?;
+        }
+        Ok((count, first, latest))
+    }
+
     /// The raw page, newest first, without any permission check or reactions.
     pub(crate) async fn page(
         &self,
@@ -137,6 +162,16 @@ mod tests {
             h.clock.advance_ms(BUCKET_SIZE_MS);
         }
         seeded
+    }
+
+    #[tokio::test]
+    async fn forum_summary_counts_stored_messages_and_returns_first_and_latest() {
+        let h = Harness::new();
+        let seeded = seed_across_buckets(&h, 3).await;
+        let (count, first, latest) = GetMessageHistory::new(&h.ports).forum_summary(CHANNEL).await.unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(first.unwrap().id, seeded[0].id);
+        assert_eq!(latest, Some(seeded[2].id));
     }
 
     #[tokio::test]

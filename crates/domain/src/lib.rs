@@ -31,9 +31,10 @@ pub use forward::{ForwardOrigin, MessageSnapshot};
 pub use link::{MAX_UNFURLED_LINKS, extract_links, is_player_iframe_host};
 pub use mention_policy::{NotificationLevel, NotificationRecipient};
 pub use mentions::Mentions;
-pub use message::{Call, Message, MessageDraft, MessageEdit, MessageKind};
+pub use message::{Call, FORUM_MARKER_FLAG, Message, MessageDraft, MessageEdit, MessageKind};
 pub use message_origin::{
-    FLAG_EPHEMERAL, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, InteractionLink, WebhookAuthor,
+    FLAG_CROSSPOSTED, FLAG_EPHEMERAL, FLAG_IS_CROSSPOST, FLAG_IS_VOICE_MESSAGE, FLAG_SUPPRESS_EMBEDS,
+    FLAG_SUPPRESS_NOTIFICATIONS, InteractionLink, WebhookAuthor,
 };
 pub use paging::{HistoryCursor, PageLimit, Scan, ScanDirection};
 pub use permissions::Permissions;
