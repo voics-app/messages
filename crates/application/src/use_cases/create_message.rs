@@ -209,6 +209,7 @@ impl CreateMessage {
             Some(_) => self.access.channel(command.channel_id).await?,
             None => self.access.access(command.channel_id, command.author_id).await?,
         };
+        access.ensure_thread_unlocked()?;
         access.ensure_standard_delivery()?;
         if command.flags & FLAG_EPHEMERAL != 0 {
             return self.relay_ephemeral(&access, command).await;
@@ -366,6 +367,24 @@ impl CreateMessage {
     }
 
     async fn publish_stored(&self, message: &Message, access: &ChannelAccess, nonce: Option<String>) {
+        if access.is_thread() {
+            let mut last_error = None;
+            for delay_ms in [0, 25, 100] {
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                match self.access.record_thread_activity(message.channel_id, message.id).await {
+                    Ok(()) => {
+                        last_error = None;
+                        break;
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            if let Some(error) = last_error {
+                tracing::warn!(message_id = %message.id, channel_id = %message.channel_id, %error, "failed to record thread activity after retries");
+            }
+        }
         self.record_side_effects(message, access.guild_id).await;
         announce(
             self.events.as_ref(),
@@ -524,6 +543,26 @@ mod tests {
             target_user_ids: targets,
             ..command("only you")
         }
+    }
+
+    #[tokio::test]
+    async fn locked_thread_rejects_public_and_internal_sends() {
+        let h = Harness::new();
+        let mut access = guild_access(discordy_messages_domain::Permissions::ADMINISTRATOR);
+        access.channel_type = 11;
+        access.thread_locked = true;
+        h.access.set(Ok(access));
+        let use_case = CreateMessage::new(&h.ports);
+        assert_eq!(
+            use_case.execute(command("public")).await,
+            Err(AppError::Domain(DomainError::MissingPermissions))
+        );
+        assert_eq!(
+            use_case.execute_internal(command("internal")).await,
+            Err(AppError::Domain(DomainError::MissingPermissions))
+        );
+        assert_eq!(h.messages.last_message_id(CHANNEL).await.unwrap(), None);
+        assert!(h.events.kinds().is_empty());
     }
 
     #[tokio::test]

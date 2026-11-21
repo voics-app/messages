@@ -457,6 +457,8 @@ pub struct ChannelAccessResponse {
     pub delivery_mode: String,
     #[serde(default)]
     pub recipient_ids: Vec<String>,
+    #[serde(default)]
+    pub thread_locked: Option<bool>,
 }
 
 /// api: `GET /internal/v1/channels/{channel_id}/delivery`. The channel's guild
@@ -468,6 +470,8 @@ pub struct ChannelRoutingResponse {
     pub delivery_mode: String,
     #[serde(default)]
     pub recipient_ids: Vec<String>,
+    #[serde(default)]
+    pub thread_locked: Option<bool>,
 }
 
 /// api: `POST /internal/v1/channels/{channel_id}/messages`. Bot, webhook and
@@ -583,6 +587,18 @@ pub struct IntrospectResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastMessageIdResponse {
     pub last_message_id: Option<String>,
+}
+
+/// messages: `POST /internal/v1/channels/message-counts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageCountsRequest {
+    pub channel_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageCountDto {
+    pub channel_id: String,
+    pub message_count: u64,
 }
 
 /// messages: `GET /internal/v1/admin/stats`. Counts only.

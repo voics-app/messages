@@ -10,6 +10,11 @@ accepted; other modes get `409` with code `50160`.
 Private-thread access is rechecked with the API on every request so a revoked thread membership
 does not remain usable for the normal five-second permission cache lifetime.
 
+Locked threads accept no new messages (public, bot, webhook and interaction sends alike), even from
+administrators, until the thread is unlocked: the send fails with `403` (missing permissions). Lock
+state comes from the api's channel access answer (`thread_locked`, exposed by api#174); lock changes
+bypass the access cache. An api that omits the field is treated as unlocked.
+
 ## Endpoints (port 8082)
 
 Public, under `/api/v1` (Bearer JWT or Bot token):

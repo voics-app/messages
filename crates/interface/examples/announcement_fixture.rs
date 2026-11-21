@@ -2,11 +2,12 @@
 //! This is a test example, not a deployable service.
 use async_trait::async_trait;
 use axum::{Json, Router, extract::State, routing::post};
+use discordy_messages_application::PortError;
 use discordy_messages_application::fakes::{Harness, MEMBER, guild_access};
 use discordy_messages_application::ports::{
     AccessError, AuthError, Authenticator, ChannelAccessProvider, MessageRepository, Principal,
 };
-use discordy_messages_domain::{ChannelAccess, ChannelId, Message, MessageDraft, Snowflake, UserId};
+use discordy_messages_domain::{ChannelAccess, ChannelId, Message, MessageDraft, MessageId, Snowflake, UserId};
 use discordy_messages_interface::{AppState, AttachmentUrls, InternalToken, metrics::Metrics, router};
 use serde::Deserialize;
 use std::sync::{
@@ -37,6 +38,9 @@ impl ChannelAccessProvider for FixtureAccess {
             0
         };
         Ok(access)
+    }
+    async fn record_thread_activity(&self, _: ChannelId, _: MessageId) -> Result<(), PortError> {
+        Ok(())
     }
 }
 

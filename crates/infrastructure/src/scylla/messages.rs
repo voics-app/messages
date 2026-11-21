@@ -31,6 +31,7 @@ pub struct ScyllaMessageRepository {
     scan_newer: PreparedStatement,
     count_bucket: PreparedStatement,
     last: PreparedStatement,
+    count: PreparedStatement,
     all_channels: PreparedStatement,
 }
 
@@ -123,6 +124,7 @@ impl ScyllaMessageRepository {
                 "SELECT last_message_id FROM channel_last_message WHERE channel_id = ?",
             )
             .await?,
+            count: prepare(s, "SELECT COUNT(*) FROM messages WHERE channel_id = ? AND bucket = ?").await?,
             all_channels: prepare(s, "SELECT channel_id, last_message_id FROM channel_last_message").await?,
             session,
         })
@@ -325,6 +327,20 @@ impl MessageRepository for ScyllaMessageRepository {
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError> {
         let rows: Vec<(Option<i64>,)> = fetch_all(&self.session, &self.last, (id(channel_id),)).await?;
         Ok(rows.into_iter().find_map(|(last,)| last).map(snowflake))
+    }
+
+    async fn message_count(&self, channel_id: ChannelId) -> Result<u64, PortError> {
+        let Some(last) = self.last_message_id(channel_id).await? else {
+            return Ok(0);
+        };
+        let counts = Bucket::of(last)
+            .descending_to(Bucket::of(channel_id))
+            .into_iter()
+            .map(|bucket| async move {
+                let rows: Vec<(i64,)> = fetch_all(&self.session, &self.count, (id(channel_id), bucket.value())).await?;
+                Ok::<u64, PortError>(rows.first().map_or(0, |(count,)| (*count).max(0) as u64))
+            });
+        Ok(futures::future::try_join_all(counts).await?.into_iter().sum())
     }
 
     async fn channels_with_messages(&self) -> Result<Vec<(ChannelId, MessageId)>, PortError> {

@@ -30,9 +30,11 @@ const TOKEN: &str = "stub-internal-token";
 #[derive(Default)]
 struct Calls {
     access: AtomicUsize,
+    activity: AtomicUsize,
     introspect: AtomicUsize,
     users: AtomicUsize,
     private_allowed: AtomicBool,
+    thread_locked: AtomicBool,
 }
 
 type Stub = Arc<Calls>;
@@ -61,6 +63,11 @@ async fn access(
             Json(json!({"permissions": "3072", "guild_id": null, "channel_type": 1,
                         "delivery_mode": "p2p", "recipient_ids": ["10", "11"]})),
         ),
+        ("5", "10") => (
+            StatusCode::OK,
+            Json(json!({"permissions": "8", "guild_id": "500", "channel_type": 11,
+                        "delivery_mode": "standard", "recipient_ids": [], "thread_locked": calls.thread_locked.load(Ordering::SeqCst)})),
+        ),
         ("4", "10") if !calls.private_allowed.load(Ordering::SeqCst) => (StatusCode::FORBIDDEN, Json(Value::Null)),
         ("4", "10") => (
             StatusCode::OK,
@@ -79,6 +86,13 @@ async fn delivery(State(calls): State<Stub>, headers: HeaderMap, Path(channel): 
         return (StatusCode::UNAUTHORIZED, Json(Value::Null));
     }
     match channel.as_str() {
+        "5" => (
+            StatusCode::OK,
+            Json(
+                json!({"guild_id": "500", "channel_type": 11, "delivery_mode": "standard",
+                        "recipient_ids": [], "thread_locked": calls.thread_locked.load(Ordering::SeqCst)}),
+            ),
+        ),
         "1" => (
             StatusCode::OK,
             Json(json!({"guild_id": "500", "channel_type": 0,
@@ -86,6 +100,19 @@ async fn delivery(State(calls): State<Stub>, headers: HeaderMap, Path(channel): 
         ),
         _ => (StatusCode::NOT_FOUND, Json(Value::Null)),
     }
+}
+
+async fn thread_activity(
+    State(calls): State<Stub>,
+    headers: HeaderMap,
+    Path(channel): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    if !authorised(&headers) || channel != "5" || body["occurred_at"].as_str().is_none() {
+        return StatusCode::BAD_REQUEST;
+    }
+    calls.activity.fetch_add(1, Ordering::SeqCst);
+    StatusCode::NO_CONTENT
 }
 
 #[tokio::test]
@@ -144,6 +171,7 @@ async fn start_stub() -> (InternalApi, Stub) {
     let app = Router::new()
         .route("/internal/v1/channels/{channel}/access/{user}", get(access))
         .route("/internal/v1/channels/{channel}/delivery", get(delivery))
+        .route("/internal/v1/threads/{channel}/activity", post(thread_activity))
         .route("/internal/v1/auth/introspect", post(introspect))
         .route("/internal/v1/users/lookup", post(users_lookup))
         .with_state(calls.clone());
@@ -189,6 +217,17 @@ async fn access_answers_map_to_domain_values() {
             .unwrap_err(),
         AccessError::Unavailable(_)
     ));
+}
+
+#[tokio::test]
+async fn committed_thread_messages_report_their_snowflake_time() {
+    let (api, calls) = start_stub().await;
+    let provider = HttpChannelAccess::new(api);
+    provider
+        .record_thread_activity(Snowflake::new(5), Snowflake::new(1 << 22))
+        .await
+        .unwrap();
+    assert_eq!(calls.activity.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -257,6 +296,24 @@ async fn private_thread_access_rechecks_revocation_and_rejoin_without_waiting_fo
         denied_cache.access(channel, user).await.unwrap().permissions,
         Permissions::new(3072)
     );
+}
+
+#[tokio::test]
+async fn thread_lock_changes_bypass_cache_and_cover_webhooks() {
+    let (api, calls) = start_stub().await;
+    let provider = HttpChannelAccess::with_ttl(api, Duration::from_secs(60));
+    let channel = Snowflake::new(5);
+    let user = Snowflake::new(10);
+    assert!(!provider.access(channel, user).await.unwrap().thread_locked);
+    calls.thread_locked.store(true, Ordering::SeqCst);
+    assert!(provider.access(channel, user).await.unwrap().thread_locked);
+    assert!(provider.channel(channel).await.unwrap().thread_locked);
+    calls.thread_locked.store(false, Ordering::SeqCst);
+    assert!(!provider.access(channel, user).await.unwrap().thread_locked);
+    assert!(!provider.channel(channel).await.unwrap().thread_locked);
+    // A legacy API response omitting the new field fails closed for a thread.
+    calls.private_allowed.store(true, Ordering::SeqCst);
+    assert!(provider.access(Snowflake::new(4), user).await.unwrap().thread_locked);
 }
 
 fn mint(sub: &str, kind: &str, issuer: &str, expires_in: i64) -> String {

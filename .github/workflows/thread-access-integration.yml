@@ -14,3 +14,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked -p discordy-messages-infrastructure --test api_clients private_thread_access_rechecks_revocation_and_rejoin_without_waiting_for_cache
+  thread-lock:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked -p discordy-messages-infrastructure --test api_clients thread_lock_changes_bypass_cache_and_cover_webhooks
+      - run: cargo test --locked -p discordy-messages-domain locked_threads_reject_sends_even_for_administrators
+      - run: cargo test --locked -p discordy-messages-application locked_thread_rejects_public_and_internal_sends

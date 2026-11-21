@@ -6,7 +6,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use contracts::{
     AdminStatsResponse, CallDto, InternalCreateMessageRequest, InternalCrosspostRequest, InternalForumStartRequest,
-    InternalForumSummaryRequest, LastMessageIdResponse, MessageDto, MessagesByMode, ReadStateDto, UpdateCallRequest,
+    InternalForumSummaryRequest, LastMessageIdResponse, MessageCountDto, MessageCountsRequest, MessageDto,
+    MessagesByMode, ReadStateDto, UpdateCallRequest,
 };
 use discordy_messages_application::MessageView;
 use discordy_messages_application::use_cases::{CreateMessageCommand, CrosspostDelivery};
@@ -323,6 +324,32 @@ pub async fn last_message_id(
     Ok(Json(LastMessageIdResponse {
         last_message_id: last.map(|id| id.to_string()),
     }))
+}
+
+pub async fn message_counts(
+    State(state): State<AppState>,
+    _: InternalCaller,
+    ApiJson(body): ApiJson<MessageCountsRequest>,
+) -> Result<Json<Vec<MessageCountDto>>, ApiError> {
+    const MAX_CHANNELS: usize = 100;
+    if body.channel_ids.len() > MAX_CHANNELS {
+        return Err(ApiError::invalid("channel_ids", "at most 100 channel ids are allowed"));
+    }
+    let channel_ids = body
+        .channel_ids
+        .iter()
+        .map(|raw| parse_id("channel_ids", raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    let counts = state.use_cases.message_counts.execute(&channel_ids).await?;
+    Ok(Json(
+        counts
+            .into_iter()
+            .map(|(channel_id, message_count)| MessageCountDto {
+                channel_id: channel_id.to_string(),
+                message_count,
+            })
+            .collect(),
+    ))
 }
 
 /// This reports observed markers only. Mixed-version rollout and historic data
