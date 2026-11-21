@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/voics-app/contracts",
+  "revision": "3783d0d0a6972eab66d55afcedf62a9ee1a37e22",
+  "source": "packages/snowflake",
+  "sha256_lf": {
+    "Cargo.toml": "8b94513f058db7a6ea9272865096c527b216d798cfb5af6dab225e021158737d",
+    "README.md": "4b61b6e6e25499f16672d730fd5a74e23277e30dbe5fbf48c2918c40c8eb28f9",
+    "rustfmt.toml": "7e1c845eb4c10735ee1060760592a18b47a53aaf45e63b7e0932c005b523a6ea",
+    "src/lib.rs": "fc4ceff44ad2eaa8c525e558b990b560e6b724a59b30d187c215a111dadb6ca7"
+  }
+}

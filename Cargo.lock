@@ -685,7 +685,11 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "reqwest",
+ "scylla",
+ "serde_json",
+ "testcontainers",
  "thiserror 2.0.21",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -701,6 +705,7 @@ dependencies = [
  "discordy-messages-domain",
  "futures",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -710,8 +715,11 @@ dependencies = [
 name = "discordy-messages-contracts"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "regress",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -754,6 +762,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
+ "voics-snowflake",
 ]
 
 [[package]]
@@ -764,6 +774,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "discordy-messages-application",
  "discordy-messages-contracts",
  "discordy-messages-domain",
@@ -797,6 +808,7 @@ dependencies = [
  "discordy-messages-contracts",
  "jsonwebtoken",
  "metrics",
+ "metrics-exporter-prometheus",
  "p256",
  "rand_core 0.6.4",
  "reqwest",
@@ -1247,6 +1259,17 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -2630,6 +2653,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "regress"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2057b2325e68a893284d1538021ab90279adac1139957ca2a74426c6f118fb48"
+dependencies = [
+ "hashbrown 0.16.1",
+ "memchr",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3910,6 +3943,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voics-snowflake"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "uuid",
+]
 
 [[package]]
 name = "want"

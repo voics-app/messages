@@ -48,7 +48,7 @@ impl CreateUploadSlots {
         for file in files {
             validate_upload_size(file.file_size)?;
             let filename = AttachmentFilename::parse(&file.filename)?;
-            let key = UploadKey::new(channel_id, self.ids.next_id(), filename);
+            let key = UploadKey::new(channel_id, self.ids.next_id()?, filename);
             slots.push(UploadSlot {
                 client_id: file.client_id,
                 upload_url: self.storage.presign_upload(&key),

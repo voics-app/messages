@@ -3,6 +3,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use contracts::{
     AdminStatsResponse, CallDto, InternalCreateMessageRequest, LastMessageIdResponse, MessageDto, MessagesByMode,
     ReadStateDto, UpdateCallRequest,
@@ -90,6 +91,7 @@ fn internal_command(
         channel_id,
         author_id,
         content: body.content.unwrap_or_default(),
+        tts: body.tts,
         attachments: body
             .attachments
             .unwrap_or_default()
@@ -185,9 +187,10 @@ pub async fn read_states(
     State(state): State<AppState>,
     _: InternalCaller,
     ApiPath(Id(user_id)): ApiPath<Id>,
-) -> Result<Json<Vec<ReadStateDto>>, ApiError> {
+) -> Result<Response, ApiError> {
     let states = state.use_cases.read_states.execute(user_id).await?;
-    Ok(Json(states.iter().map(read_state_dto).collect()))
+    let body: Vec<ReadStateDto> = states.iter().map(read_state_dto).collect();
+    Ok(([("x-read-state-versioned", "1")], Json(body)).into_response())
 }
 
 pub async fn admin_stats(

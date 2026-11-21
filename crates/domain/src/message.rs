@@ -1,6 +1,8 @@
 //! The Message aggregate.
 
-use crate::attachment::{Attachment, MAX_ATTACHMENTS_PER_MESSAGE};
+use crate::attachment::{
+    ATTACHMENT_FLAG_SPOILER, Attachment, AttachmentMetadataEdit, MAX_ATTACHMENTS_PER_MESSAGE, validate_description,
+};
 use crate::error::{DomainError, FieldError};
 use crate::forward::ForwardOrigin;
 use crate::mentions::Mentions;
@@ -106,6 +108,7 @@ impl Call {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MessageDraft {
     pub content: String,
+    pub tts: bool,
     pub attachments: Vec<Attachment>,
     pub embeds: Vec<String>,
     pub components: Vec<String>,
@@ -133,6 +136,7 @@ pub struct MessageDraft {
 pub struct MessageEdit {
     pub content: Option<String>,
     pub embeds: Option<Vec<String>>,
+    pub attachments: Option<Vec<AttachmentMetadataEdit>>,
     /// Only the SUPPRESS_EMBEDS bit is honoured; other bits are ignored.
     pub flags: Option<u32>,
 }
@@ -140,7 +144,9 @@ pub struct MessageEdit {
 impl MessageEdit {
     /// Whether the edit rewrites the message body (as opposed to only flags).
     pub fn changes_body(&self) -> bool {
-        self.content.is_some() || self.embeds.is_some()
+        self.content.is_some()
+            || self.embeds.is_some()
+            || self.attachments.as_ref().is_some_and(|edits| !edits.is_empty())
     }
 
     /// The requested SUPPRESS_EMBEDS state, if the edit carries flags.
@@ -156,6 +162,7 @@ pub struct Message {
     pub author_id: UserId,
     pub kind: MessageKind,
     pub content: String,
+    pub tts: bool,
     pub attachments: Vec<Attachment>,
     pub embeds: Vec<String>,
     pub components: Vec<String>,
@@ -205,6 +212,7 @@ impl Message {
             kind,
             mentions,
             content: draft.content,
+            tts: draft.tts && !kind.is_system(),
             attachments: draft.attachments,
             embeds: draft.embeds,
             components: draft.components,
@@ -240,6 +248,29 @@ impl Message {
         }
         if let Some(embeds) = edit.embeds {
             edited.embeds = embeds;
+        }
+        if let Some(attachments) = edit.attachments {
+            if attachments.len() > MAX_ATTACHMENTS_PER_MESSAGE {
+                return Err(DomainError::invalid("attachments", "must be 10 or fewer"));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for update in attachments {
+                if !seen.insert(update.id) {
+                    return Err(DomainError::invalid("attachments", "duplicate attachment id"));
+                }
+                let attachment = edited
+                    .attachments
+                    .iter_mut()
+                    .find(|attachment| attachment.id == update.id)
+                    .ok_or_else(|| DomainError::invalid("attachments", "unknown attachment id"))?;
+                if let Some(description) = update.description {
+                    attachment.description = validate_description(description.as_deref())?;
+                }
+                if let Some(flags) = update.flags {
+                    attachment.flags =
+                        (attachment.flags & !ATTACHMENT_FLAG_SPOILER) | (flags & ATTACHMENT_FLAG_SPOILER);
+                }
+            }
         }
         edited.validate()?;
         edited.edited_at_ms = Some(now_unix_ms);
@@ -354,14 +385,102 @@ mod tests {
     }
 
     #[test]
+    fn attachment_edits_are_atomic_and_preserve_unmentioned_metadata() {
+        let mut original = compose(MessageDraft {
+            content: "original".into(),
+            attachments: vec![Attachment {
+                flags: 16,
+                ..attachment()
+            }],
+            ..MessageDraft::default()
+        })
+        .unwrap();
+        let update = AttachmentMetadataEdit {
+            id: Snowflake::new(9),
+            description: Some(Some("new alt".into())),
+            flags: Some(8),
+        };
+        for invalid in [
+            vec![update.clone(), update.clone()],
+            vec![
+                update.clone(),
+                AttachmentMetadataEdit {
+                    id: Snowflake::new(10),
+                    ..update.clone()
+                },
+            ],
+            vec![AttachmentMetadataEdit {
+                description: Some(Some("x".repeat(1025))),
+                ..update.clone()
+            }],
+            vec![update.clone(); 11],
+        ] {
+            let mut message = original.clone();
+            assert!(
+                message
+                    .apply_edit(
+                        AUTHOR,
+                        MessageEdit {
+                            content: Some("new body".into()),
+                            attachments: Some(invalid),
+                            ..MessageEdit::default()
+                        },
+                        false,
+                        100
+                    )
+                    .is_err()
+            );
+            assert_eq!(
+                message, original,
+                "invalid attachment edit must not partially change a message"
+            );
+        }
+        original
+            .apply_edit(
+                AUTHOR,
+                MessageEdit {
+                    attachments: Some(vec![update]),
+                    ..MessageEdit::default()
+                },
+                false,
+                100,
+            )
+            .unwrap();
+        assert_eq!(
+            original.attachments[0].flags, 24,
+            "non-spoiler stored bits are preserved"
+        );
+        original
+            .apply_edit(
+                AUTHOR,
+                MessageEdit {
+                    attachments: Some(vec![AttachmentMetadataEdit {
+                        id: Snowflake::new(9),
+                        description: None,
+                        flags: Some(0),
+                    }]),
+                    ..MessageEdit::default()
+                },
+                false,
+                200,
+            )
+            .unwrap();
+        assert_eq!(original.attachments[0].description.as_deref(), Some("new alt"));
+        assert_eq!(original.attachments[0].flags, 16);
+        assert_eq!(original.content, "original");
+    }
+
+    #[test]
     fn composes_a_system_message_without_content() {
         let message = compose(MessageDraft {
             system_kind: Some(MessageKind::RecipientAdd),
+            tts: true,
             system_target: Some(Snowflake::new(9)),
             ..MessageDraft::default()
         })
         .unwrap();
         assert_eq!(message.kind.code(), 1);
+        assert!(!message.tts, "system messages never trigger text to speech");
         assert!(message.mentions.users.contains(&Snowflake::new(9)));
         assert!(compose(MessageDraft::default()).is_err());
     }
@@ -508,6 +627,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some("bye <@8>".into()),
             embeds: None,
+            attachments: None,
             flags: None,
         };
         message.apply_edit(AUTHOR, edit, false, 1234).unwrap();
@@ -523,6 +643,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some("hacked".into()),
             embeds: None,
+            attachments: None,
             flags: None,
         };
         assert_eq!(
@@ -538,6 +659,7 @@ mod tests {
         let edit = MessageEdit {
             content: Some(String::new()),
             embeds: None,
+            attachments: None,
             flags: None,
         };
         assert!(message.apply_edit(AUTHOR, edit, false, 1).is_err());

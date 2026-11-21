@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
@@ -32,6 +32,7 @@ struct Calls {
     access: AtomicUsize,
     introspect: AtomicUsize,
     users: AtomicUsize,
+    private_allowed: AtomicBool,
 }
 
 type Stub = Arc<Calls>;
@@ -59,6 +60,12 @@ async fn access(
             StatusCode::OK,
             Json(json!({"permissions": "3072", "guild_id": null, "channel_type": 1,
                         "delivery_mode": "p2p", "recipient_ids": ["10", "11"]})),
+        ),
+        ("4", "10") if !calls.private_allowed.load(Ordering::SeqCst) => (StatusCode::FORBIDDEN, Json(Value::Null)),
+        ("4", "10") => (
+            StatusCode::OK,
+            Json(json!({"permissions": "3072", "guild_id": "500", "channel_type": 12,
+                        "delivery_mode": "standard", "recipient_ids": []})),
         ),
         ("1", _) => (StatusCode::FORBIDDEN, Json(Value::Null)),
         ("3", _) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Value::Null)),
@@ -218,6 +225,38 @@ async fn access_answers_are_cached_and_coalesced_then_expire() {
         assert!(provider.access(Snowflake::new(3), Snowflake::new(10)).await.is_err());
     }
     assert_eq!(calls.access.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn private_thread_access_rechecks_revocation_and_rejoin_without_waiting_for_cache() {
+    let (api, calls) = start_stub().await;
+    calls.private_allowed.store(true, Ordering::SeqCst);
+    let provider = HttpChannelAccess::with_ttl(api.clone(), Duration::from_secs(60));
+    let channel = Snowflake::new(4);
+    let user = Snowflake::new(10);
+    assert_eq!(
+        provider.access(channel, user).await.unwrap().permissions,
+        Permissions::new(3072)
+    );
+    calls.private_allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        provider.access(channel, user).await.unwrap_err(),
+        AccessError::NotMember
+    );
+    let denied_cache = HttpChannelAccess::with_ttl(api, Duration::from_secs(60));
+    assert_eq!(
+        denied_cache.access(channel, user).await.unwrap_err(),
+        AccessError::NotMember
+    );
+    calls.private_allowed.store(true, Ordering::SeqCst);
+    assert_eq!(
+        provider.access(channel, user).await.unwrap().permissions,
+        Permissions::new(3072)
+    );
+    assert_eq!(
+        denied_cache.access(channel, user).await.unwrap().permissions,
+        Permissions::new(3072)
+    );
 }
 
 fn mint(sub: &str, kind: &str, issuer: &str, expires_in: i64) -> String {

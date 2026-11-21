@@ -68,6 +68,7 @@ async fn scylla_adapters_against_a_real_node() {
 async fn message_crud(repo: &ScyllaMessageRepository) {
     let channel = id_at(1, 0);
     let mut original = message(channel, id_at(BUCKET_SIZE_MS * 2, 1), "hello <@7>");
+    original.tts = true;
     original.attachments.push(Attachment {
         id: Snowflake::new(900),
         filename: AttachmentFilename::parse("cat.png").unwrap(),
@@ -84,6 +85,8 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
 
     let mut edited = original.clone();
     edited.content = "edited".into();
+    edited.attachments[0].description = Some("a sleeping cat".into());
+    edited.attachments[0].flags = 0;
     edited.edited_at_ms = Some(DISCORDY_EPOCH_MS + 5);
     repo.update(&edited).await.unwrap();
     repo.set_pinned(channel, original.id, true).await.unwrap();
@@ -93,7 +96,9 @@ async fn message_crud(repo: &ScyllaMessageRepository) {
     assert_eq!(stored.flags, 4, "SUPPRESS_EMBEDS persists through update");
     assert_eq!(stored.content, "edited");
     assert!(stored.pinned);
-    assert_eq!(stored.attachments, original.attachments);
+    assert!(stored.tts, "TTS survives both insert and later message edits");
+    assert_eq!(stored.attachments, edited.attachments);
+    assert_eq!(stored.attachments[0].key(channel), original.attachments[0].key(channel));
 
     let forwarded = Message::compose(
         id_at(BUCKET_SIZE_MS * 2, 5),
@@ -297,10 +302,17 @@ async fn pins_round_trip(repo: &ScyllaPinRepository) {
 
 async fn read_states_round_trip(repo: &ScyllaReadStateRepository) {
     let user = Snowflake::new(77);
-    let mut state = ReadState::unread(user, Snowflake::new(1));
-    state.record_mention(Snowflake::new(10));
-    repo.save(&state).await.unwrap();
-    repo.save(&ReadState::unread(user, Snowflake::new(2))).await.unwrap();
+    let state = ReadState {
+        mention_count: 1,
+        version: 1,
+        ..ReadState::unread(user, Snowflake::new(1))
+    };
+    repo.record_mention(user, Snowflake::new(1), Snowflake::new(10))
+        .await
+        .unwrap();
+    repo.acknowledge(user, Snowflake::new(2), Snowflake::new(1))
+        .await
+        .unwrap();
     assert_eq!(repo.find(user, Snowflake::new(1)).await.unwrap(), Some(state.clone()));
     assert_eq!(repo.for_user(user).await.unwrap().len(), 2);
     assert_eq!(repo.find(Snowflake::new(78), Snowflake::new(1)).await.unwrap(), None);

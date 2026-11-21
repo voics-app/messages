@@ -66,6 +66,12 @@ fn domain_status(error: &DomainError) -> (StatusCode, u32, Option<Value>) {
             error_code::INVALID_FORM_BODY,
             Some(field_errors(fields)),
         ),
+        DomainError::ScheduleConflict(fields) => (
+            StatusCode::CONFLICT,
+            error_code::INVALID_FORM_BODY,
+            Some(field_errors(fields)),
+        ),
+        DomainError::UnknownSchedule => (StatusCode::NOT_FOUND, error_code::UNKNOWN_MESSAGE, None),
         DomainError::MissingAccess => (StatusCode::FORBIDDEN, error_code::MISSING_ACCESS, None),
         DomainError::MissingPermissions => (StatusCode::FORBIDDEN, error_code::MISSING_PERMISSIONS, None),
         DomainError::DeliveryModeConflict(_) => (StatusCode::CONFLICT, error_code::DELIVERY_MODE_CONFLICT, None),

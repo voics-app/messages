@@ -358,7 +358,7 @@ mod tests {
         let other = Snowflake::new(2 << 22);
         harness.access.set_permissions(MEMBER);
         let hidden = Message::compose(
-            harness.ports.ids.next_id(),
+            harness.ports.ids.next_id().unwrap(),
             other,
             ALICE,
             discordy_messages_domain::MessageDraft {

@@ -8,7 +8,7 @@ use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::value::CqlTimestamp;
 
-use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, id, snowflake};
+use super::rows::{MESSAGE_COLUMN_COUNT, MESSAGE_COLUMNS, MessageRow, attachment_udt, id, snowflake};
 use super::{execute, fetch_all, prepare};
 
 pub struct ScyllaMessageRepository {
@@ -27,6 +27,16 @@ pub struct ScyllaMessageRepository {
 }
 
 impl ScyllaMessageRepository {
+    /// Scheduled delivery cannot transparently repeat a message insertion after an ambiguous result.
+    pub async fn for_scheduled_delivery(session: Arc<Session>) -> Result<Self, PortError> {
+        let mut repository = Self::new(session).await?;
+        for statement in [&mut repository.insert, &mut repository.advance_last] {
+            statement.set_is_idempotent(false);
+            statement.set_retry_policy(Some(Arc::new(scylla::policies::retry::FallthroughRetryPolicy)));
+        }
+        Ok(repository)
+    }
+
     pub async fn new(session: Arc<Session>) -> Result<Self, PortError> {
         let s = session.as_ref();
         let select = format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE channel_id = ? AND bucket = ?");
@@ -46,7 +56,7 @@ impl ScyllaMessageRepository {
             .await?,
             update_content: prepare(
                 s,
-                "UPDATE messages SET content = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
+                "UPDATE messages SET content = ?, attachments = ?, embeds = ?, flags = ?, mentions = ?, mention_roles = ?, \
                  mention_everyone = ?, mention_here = ?, edited_at = ?, call_participants = ?, call_ended_at = ? WHERE channel_id = ? AND bucket = ? AND message_id = ?",
             )
             .await?,
@@ -107,6 +117,7 @@ impl MessageRepository for ScyllaMessageRepository {
             &self.update_content,
             (
                 &message.content,
+                message.attachments.iter().map(attachment_udt).collect::<Vec<_>>(),
                 format!("[{}]", message.embeds.join(",")),
                 message.flags as i32,
                 message.mentions.users.iter().copied().map(id).collect::<Vec<_>>(),

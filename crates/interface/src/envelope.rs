@@ -149,12 +149,23 @@ impl EnvelopePublisher {
             MessageEventKind::Acknowledged {
                 message_id,
                 mention_count,
+                version,
             } => (
                 event_type::MESSAGE_ACK,
                 encode(&MessageAckData {
                     channel_id: channel_id.clone(),
                     message_id: message_id.to_string(),
                     mention_count: *mention_count,
+                    read_state_version: version.to_string(),
+                })?,
+            ),
+            MessageEventKind::ReadStateUpdated { state } => (
+                event_type::READ_STATE_UPDATE,
+                encode(&contracts::ReadStateUpdateData {
+                    channel_id,
+                    last_message_id: state.last_read_id.map(|id| id.to_string()),
+                    mention_count: state.mention_count,
+                    read_state_version: state.version.to_string(),
                 })?,
             ),
         };
@@ -229,6 +240,27 @@ mod tests {
             audience,
             kind,
         }
+    }
+
+    #[test]
+    fn read_snapshots_are_user_targeted_and_preserve_large_versions() {
+        let (publisher, _) = publisher();
+        let state = discordy_messages_domain::ReadState {
+            version: 9_007_199_254_740_993,
+            mention_count: 2,
+            ..discordy_messages_domain::ReadState::unread(ALICE, CHANNEL)
+        };
+        let event = event(
+            Audience::Users(vec![ALICE]),
+            Some(GUILD),
+            MessageEventKind::ReadStateUpdated { state },
+        );
+        let envelope = publisher.envelope(&event, &Authors::new()).unwrap();
+        assert_eq!(envelope.kind, "READ_STATE_UPDATE");
+        assert_eq!(envelope.target_user_ids, Some(vec![ALICE.to_string()]));
+        assert_eq!(envelope.data["read_state_version"], "9007199254740993");
+        assert_eq!(envelope.data["mention_count"], 2);
+        assert_eq!(envelope.data["last_message_id"], Value::Null);
     }
 
     #[tokio::test]

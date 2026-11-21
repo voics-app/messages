@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/domain", "crates/application", "crates/contracts", "crates/infrastructure", "crates/interface", "crates/notifier", "bin/messages", "bin/notifier"]
+members = ["crates/domain", "crates/application", "crates/contracts", "crates/infrastructure", "crates/interface", "crates/notifier", "crates/snowflake", "bin/messages", "bin/notifier"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ discordy-messages-application = { path = "crates/application" }
 discordy-messages-infrastructure = { path = "crates/infrastructure" }
 discordy-messages-interface = { path = "crates/interface" }
 discordy-messages-contracts = { path = "crates/contracts" }
+voics-snowflake = { path = "crates/snowflake" }
 discordy-messages-notifier = { path = "crates/notifier" }
 
 async-trait = "0.1"
