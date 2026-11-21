@@ -6,8 +6,8 @@ use discordy_messages_application::ports::{AttachmentStorage, Authenticator, Rem
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
     GetLastMessageId, GetMessage, GetMessageHistory, GetMessageStats, ListPins, ListReactionUsers, ListReadStates,
-    MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions, RemoveOwnReaction,
-    RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
+    MarkCrossposted, MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch, RemoveAllReactions,
+    RemoveOwnReaction, RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
 };
 use subtle::ConstantTimeEq;
 
@@ -43,6 +43,7 @@ pub struct UseCases {
     pub pin: PinMessage,
     pub unpin: UnpinMessage,
     pub update_call: UpdateCall,
+    pub mark_crossposted: MarkCrossposted,
     pub list_pins: ListPins,
     pub acknowledge: AcknowledgeMessage,
     pub upload_slots: CreateUploadSlots,
@@ -71,6 +72,7 @@ impl UseCases {
             pin: PinMessage::new(ports),
             unpin: UnpinMessage::new(ports),
             update_call: UpdateCall::new(ports),
+            mark_crossposted: MarkCrossposted::new(ports),
             list_pins: ListPins::new(ports),
             acknowledge: AcknowledgeMessage::new(ports),
             upload_slots: CreateUploadSlots::new(ports),

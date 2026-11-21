@@ -39,6 +39,10 @@ fn message(channel: Snowflake, id: Snowflake, content: &str) -> Message {
 #[tokio::test]
 async fn scylla_adapters_against_a_real_node() {
     if !support::cpu_supports_scylla() {
+        assert!(
+            std::env::var_os("REQUIRE_SCYLLA_CPU").is_none(),
+            "this job requires a Scylla-capable CPU"
+        );
         eprintln!("skipping: ScyllaDB needs SSE4.2 and PCLMULQDQ, which this CPU does not expose");
         return;
     }
@@ -50,12 +54,15 @@ async fn scylla_adapters_against_a_real_node() {
         .expect("migrations are idempotent");
 
     let messages = Arc::new(ScyllaMessageRepository::new(Arc::clone(&session)).await.unwrap());
+    let second_message_writer = ScyllaMessageRepository::new(Arc::clone(&session)).await.unwrap();
     let reactions = Arc::new(ScyllaReactionRepository::new(Arc::clone(&session)).await.unwrap());
     let pins = ScyllaPinRepository::new(Arc::clone(&session)).await.unwrap();
     let read_states = ScyllaReadStateRepository::new(Arc::clone(&session)).await.unwrap();
     let activity = ScyllaActivityRepository::new(Arc::clone(&session)).await.unwrap();
 
     message_crud(messages.as_ref()).await;
+    forum_reservation_is_atomic_and_survives_deletion(messages.as_ref(), &second_message_writer).await;
+    publication_marker_survives_stale_edits(messages.as_ref()).await;
     system_message_payloads(messages.as_ref()).await;
     bucketed_history(Arc::clone(&messages), Arc::clone(&reactions)).await;
     last_message_id_never_regresses(messages.as_ref()).await;
@@ -63,6 +70,63 @@ async fn scylla_adapters_against_a_real_node() {
     pins_round_trip(&pins).await;
     read_states_round_trip(&read_states).await;
     activity_counts(&activity).await;
+}
+
+async fn forum_reservation_is_atomic_and_survives_deletion(
+    first_writer: &ScyllaMessageRepository,
+    second_writer: &ScyllaMessageRepository,
+) {
+    let channel = id_at(BUCKET_SIZE_MS * 6, 100);
+    let opener_id = id_at(BUCKET_SIZE_MS * 6, 101);
+    let opener = message(channel, opener_id, "forum opener");
+    let mut marker = opener.clone();
+    marker.id = channel;
+    marker.content = "digest".into();
+    marker.flags = discordy_messages_domain::FORUM_MARKER_FLAG;
+    marker.reply_to = Some(opener_id);
+    marker.mentions = Mentions::default();
+    let (a, b) = tokio::join!(
+        first_writer.insert_forum_once(&marker, &opener),
+        second_writer.insert_forum_once(&marker, &opener)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a, b, "exactly one conditional batch may win");
+    assert_eq!(
+        first_writer.forum_marker(channel).await.unwrap(),
+        Some((AUTHOR, opener_id, "digest".into()))
+    );
+    assert!(first_writer.find(channel, channel).await.unwrap().is_none());
+    assert_eq!(
+        second_writer.find(channel, opener_id).await.unwrap().unwrap().content,
+        "forum opener"
+    );
+    assert_eq!(
+        first_writer.count_bucket(channel, Bucket::of(channel)).await.unwrap(),
+        1
+    );
+    second_writer.delete(channel, &[opener_id]).await.unwrap();
+    assert!(!first_writer.insert_forum_once(&marker, &opener).await.unwrap());
+    assert!(second_writer.find(channel, opener_id).await.unwrap().is_none());
+    assert_eq!(
+        first_writer.count_bucket(channel, Bucket::of(channel)).await.unwrap(),
+        0
+    );
+    assert!(second_writer.forum_marker(channel).await.unwrap().is_some());
+}
+
+async fn publication_marker_survives_stale_edits(repo: &ScyllaMessageRepository) {
+    let channel = id_at(50, 0);
+    let mut stale = message(channel, id_at(BUCKET_SIZE_MS * 2, 111), "before");
+    repo.insert(&stale).await.unwrap();
+    assert!(repo.mark_crossposted(channel, stale.id).await.unwrap());
+    stale.content = "after".into();
+    repo.update(&stale).await.unwrap();
+    let stored = repo.find(channel, stale.id).await.unwrap().unwrap();
+    assert_eq!(stored.content, "after");
+    assert_ne!(stored.flags & discordy_messages_domain::FLAG_CROSSPOSTED, 0);
+    repo.delete(channel, &[stale.id]).await.unwrap();
+    assert!(!repo.mark_crossposted(channel, stale.id).await.unwrap());
+    assert!(repo.find(channel, stale.id).await.unwrap().is_none());
 }
 
 async fn message_crud(repo: &ScyllaMessageRepository) {

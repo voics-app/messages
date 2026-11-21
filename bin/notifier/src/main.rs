@@ -12,7 +12,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use notifier::application::{DispatchConfig, Dispatcher, EventHandler, HandlerConfig, ManualPush, PushSender};
+use notifier::application::{
+    DispatchConfig, Dispatcher, EventDeliveryWorker, EventHandler, HandlerConfig, ManualPush, PushSender,
+};
 use notifier::infrastructure::api_client::ApiClient;
 use notifier::infrastructure::apns::{ApnsConfig, ApnsSender};
 use notifier::infrastructure::fcm::{FcmConfig, FcmSender};
@@ -98,6 +100,7 @@ async fn run(config: Config) -> Result<(), Box<dyn Error>> {
         &config.api_internal_url,
         config.internal_service_token.clone(),
     )?);
+    tokio::spawn(EventDeliveryWorker::new(api.clone(), sender.clone(), api.clone()).run());
     let dispatcher = Dispatcher::spawn(
         DispatchConfig {
             queue_capacity: config.queue_capacity,

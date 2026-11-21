@@ -376,7 +376,7 @@ async fn silent_flag_is_kept_and_replied_user_false_drops_the_reply_ping() {
         &messages_uri(),
         Some(ALICE_TOKEN),
         // EPHEMERAL (64) is not client-settable: only SUPPRESS_NOTIFICATIONS survives.
-        Some(json!({"content": "shh <@11>", "flags": 4096 | 64})),
+        Some(json!({"content": "shh <@11>", "flags": 4096 | 64 | 1 | 2})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -683,6 +683,53 @@ async fn internal_webhook_posts_are_authored_by_the_webhook_with_overrides() {
     assert_eq!(created["webhook_id"], "900");
     assert_eq!(created["author_override"]["username"], "Relay");
     assert_eq!(created["author_override"]["avatar_url"], "https://cdn.test/a.png");
+}
+
+#[tokio::test]
+async fn publication_marker_requires_internal_authentication() {
+    let harness = Harness::new();
+    let mut access = guild_access(MEMBER);
+    access.channel_type = 5;
+    *harness.access.channel.lock().unwrap() = Ok(access);
+    let original = harness.seed(ALICE, "news").await;
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/messages/{}/crossposted", original.id);
+    let (status, _) = post_internal(&app, &uri, None, json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, marked) = post_internal(&app, &uri, Some(INTERNAL), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(marked["flags"].as_u64().unwrap() & 1, 1);
+}
+
+#[tokio::test]
+async fn trusted_crosspost_delivers_snapshot_with_reserved_identity() {
+    let harness = Harness::new();
+    *harness.access.channel.lock().unwrap() = Ok(guild_access(MEMBER));
+    harness.storage.put_body("attachments/900/777/news.png", b"image");
+    let app = app(&harness);
+    let uri = format!("/internal/v1/channels/{CHANNEL}/crossposts");
+    let payload = json!({"source_channel_id":"900", "message_id":"901", "webhook_id":"902", "webhook_name":"News", "snapshot":{"content":"hello @everyone", "embeds":[], "attachments":[{"id":"777", "filename":"news.png", "size":5}]}});
+    let (status, _) = post_internal(&app, &uri, None, payload.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, delivered) = post_internal(&app, &uri, Some(INTERNAL), payload.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(delivered["id"], "901");
+    assert_eq!(delivered["webhook_id"], "902");
+    assert_eq!(delivered["flags"].as_u64().unwrap() & 2, 2);
+    assert_eq!(delivered["mention_everyone"], false);
+    assert_eq!(delivered["attachments"][0]["id"], "777");
+    assert!(
+        harness
+            .storage
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&format!("attachments/{CHANNEL}/777/news.png"))
+    );
+    let (status, repeated) = post_internal(&app, &uri, Some(INTERNAL), payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(repeated["id"], delivered["id"]);
+    assert_eq!(harness.events.kinds().len(), 1);
 }
 
 #[tokio::test]
