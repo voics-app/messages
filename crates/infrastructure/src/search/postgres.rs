@@ -145,6 +145,26 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, request: &SearchRequest) {
 impl SearchIndex for PgSearchIndex {
     async fn apply(&self, ops: &[IndexOp], checkpoint: Option<&Checkpoint>) -> Result<(), PortError> {
         let mut tx = self.pool.begin().await.map_err(port_error)?;
+        if let Some(checkpoint) = checkpoint {
+            // Every replica reads every partition. Serialize each partition's batches,
+            // including the first batch before an offset row exists.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1), $2)")
+                .bind(&checkpoint.topic)
+                .bind(checkpoint.partition)
+                .execute(&mut *tx)
+                .await
+                .map_err(port_error)?;
+            let current: Option<i64> =
+                sqlx::query_scalar("SELECT next_offset FROM search_offsets WHERE topic = $1 AND partition = $2")
+                    .bind(&checkpoint.topic)
+                    .bind(checkpoint.partition)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(port_error)?;
+            if current.is_some_and(|offset| offset >= checkpoint.next_offset) {
+                return tx.commit().await.map_err(port_error);
+            }
+        }
         for op in ops {
             match op {
                 IndexOp::Upsert(entry) => {

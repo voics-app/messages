@@ -180,3 +180,65 @@ async fn indexes_searches_filters_and_forgets() {
     index.set_backfill_state(BackfillState::Complete).await.unwrap();
     assert_eq!(index.backfill_state().await.unwrap(), BackfillState::Complete);
 }
+
+#[tokio::test]
+async fn stale_replica_batch_cannot_resurrect_deleted_message_or_rewind_offset() {
+    let pg = support::start_postgres().await;
+    let index = PgSearchIndex::new(connect(&pg.url).unwrap());
+    index.migrate().await.unwrap();
+    let checkpoint = |next_offset| Checkpoint {
+        topic: "replica-test".into(),
+        partition: 0,
+        next_offset,
+    };
+    index
+        .apply(&[IndexOp::Upsert(entry(C1, 1, ALICE, "secret"))], Some(&checkpoint(1)))
+        .await
+        .unwrap();
+    index
+        .apply(
+            &[IndexOp::Delete {
+                channel_id: C1,
+                message_ids: vec![Snowflake::new(1)],
+            }],
+            Some(&checkpoint(2)),
+        )
+        .await
+        .unwrap();
+    // A second replica finishes an older fetch after the delete was committed.
+    index
+        .apply(&[IndexOp::Upsert(entry(C1, 1, ALICE, "secret"))], Some(&checkpoint(1)))
+        .await
+        .unwrap();
+    assert_eq!(index.checkpoint("replica-test", 0).await.unwrap(), Some(2));
+    assert_eq!(index.search(&request(&[C1], text("secret"))).await.unwrap().total, 0);
+}
+
+#[tokio::test]
+async fn concurrent_replica_batches_leave_the_highest_offset_and_value() {
+    let pg = support::start_postgres().await;
+    let index = std::sync::Arc::new(PgSearchIndex::new(connect(&pg.url).unwrap()));
+    index.migrate().await.unwrap();
+    let mut tasks = Vec::new();
+    for n in 1..=20 {
+        let index = index.clone();
+        tasks.push(tokio::spawn(async move {
+            let checkpoint = Checkpoint {
+                topic: "concurrent".into(),
+                partition: 0,
+                next_offset: n,
+            };
+            let content = if n == 20 { "latest" } else { "stale" };
+            index
+                .apply(&[IndexOp::Upsert(entry(C1, 1, ALICE, content))], Some(&checkpoint))
+                .await
+                .unwrap();
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    assert_eq!(index.checkpoint("concurrent", 0).await.unwrap(), Some(20));
+    assert_eq!(index.search(&request(&[C1], text("latest"))).await.unwrap().total, 1);
+    assert_eq!(index.search(&request(&[C1], text("stale"))).await.unwrap().total, 0);
+}
