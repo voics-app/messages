@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::application::{
-    ChannelTargets, DeviceDirectory, DevicePage, DeviceToken, Environment, Platform, PortError, Target,
-    TargetDirectory, TokenRegistry,
+    ChannelTargets, DeviceDirectory, DevicePage, DeviceToken, Environment, EventDelivery, EventDeliveryDirectory,
+    Platform, PortError, Target, TargetDirectory, TokenRegistry,
 };
 use crate::domain::{ChannelContext, Level, Recipient};
 
@@ -110,6 +110,63 @@ impl TokenBody {
             previews: self.previews,
             only_mentions: self.only_mentions,
         })
+    }
+}
+
+#[async_trait]
+impl EventDeliveryDirectory for ApiClient {
+    async fn claim(&self) -> Result<Option<EventDelivery>, PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/claim",
+                self.base_url
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event claim answered {}", response.status())));
+        }
+        response.json().await.map_err(PortError::new)
+    }
+
+    async fn resolve(&self, delivery: &EventDelivery) -> Result<Option<DeviceToken>, PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/{}/resolve",
+                self.base_url, delivery.delivery_id
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .json(&serde_json::json!({"lease_id": delivery.lease_id}))
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event resolve answered {}", response.status())));
+        }
+        let token: Option<TokenBody> = response.json().await.map_err(PortError::new)?;
+        Ok(token.and_then(TokenBody::into_token))
+    }
+
+    async fn finish(&self, delivery: &EventDelivery, retry_after_secs: Option<u32>) -> Result<(), PortError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/internal/v1/scheduled-event-deliveries/{}/finish",
+                self.base_url, delivery.delivery_id
+            ))
+            .header("x-internal-token", &self.internal_token)
+            .json(&serde_json::json!({"lease_id": delivery.lease_id, "retry_after_secs": retry_after_secs}))
+            .send()
+            .await
+            .map_err(PortError::new)?;
+        if !response.status().is_success() {
+            return Err(PortError::new(format!("event finish answered {}", response.status())));
+        }
+        Ok(())
     }
 }
 

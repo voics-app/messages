@@ -69,6 +69,14 @@ impl MessageRepository for InMemoryMessages {
         }
         Ok(())
     }
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError> {
+        if let Some(message) = self.rows.lock().unwrap().get_mut(&(channel_id, message_id)) {
+            message.flags |= discordy_messages_domain::FLAG_CROSSPOSTED;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
     async fn insert(&self, message: &Message) -> Result<(), PortError> {
         self.rows
             .lock()
@@ -80,6 +88,27 @@ impl MessageRepository for InMemoryMessages {
         Ok(())
     }
 
+    async fn insert_forum_once(&self, marker: &Message, message: &Message) -> Result<bool, PortError> {
+        let mut rows = self.rows.lock().unwrap();
+        if rows.contains_key(&(marker.channel_id, marker.id)) {
+            return Ok(false);
+        }
+        rows.insert((marker.channel_id, marker.id), marker.clone());
+        rows.insert((message.channel_id, message.id), message.clone());
+        drop(rows);
+        let mut last = self.last.lock().unwrap();
+        let entry = last.entry(message.channel_id).or_insert(message.id);
+        *entry = (*entry).max(message.id);
+        Ok(true)
+    }
+    async fn forum_marker(&self, channel_id: ChannelId) -> Result<Option<(UserId, MessageId, String)>, PortError> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows
+            .get(&(channel_id, channel_id))
+            .filter(|m| m.flags == discordy_messages_domain::FORUM_MARKER_FLAG)
+            .and_then(|m| m.reply_to.map(|id| (m.author_id, id, m.content.clone()))))
+    }
+
     async fn update(&self, message: &Message) -> Result<(), PortError> {
         self.rows
             .lock()
@@ -89,13 +118,21 @@ impl MessageRepository for InMemoryMessages {
     }
 
     async fn find(&self, channel_id: ChannelId, message_id: MessageId) -> Result<Option<Message>, PortError> {
-        Ok(self.rows.lock().unwrap().get(&(channel_id, message_id)).cloned())
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .get(&(channel_id, message_id))
+            .filter(|m| m.flags != discordy_messages_domain::FORUM_MARKER_FLAG)
+            .cloned())
     }
 
     async fn delete(&self, channel_id: ChannelId, message_ids: &[MessageId]) -> Result<(), PortError> {
         let mut rows = self.rows.lock().unwrap();
         for id in message_ids {
-            rows.remove(&(channel_id, *id));
+            if *id != channel_id {
+                rows.remove(&(channel_id, *id));
+            }
         }
         Ok(())
     }
@@ -111,9 +148,11 @@ impl MessageRepository for InMemoryMessages {
         self.scans.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         let rows = self.rows.lock().unwrap();
-        let in_bucket = rows
-            .values()
-            .filter(|m| m.channel_id == query.channel_id && Bucket::of(m.id) == query.bucket);
+        let in_bucket = rows.values().filter(|m| {
+            m.channel_id == query.channel_id
+                && Bucket::of(m.id) == query.bucket
+                && m.flags != discordy_messages_domain::FORUM_MARKER_FLAG
+        });
         let result: Vec<Message> = match query.direction {
             ScanDirection::Older => in_bucket
                 .rev()

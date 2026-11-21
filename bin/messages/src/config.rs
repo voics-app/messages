@@ -44,6 +44,8 @@ pub struct Config {
     pub attachment_url_ttl: Duration,
     /// Origins allowed by CORS; `null` is the origin of the packaged `file://` client.
     pub cors_allowed_origins: Vec<String>,
+    /// Exact media hosts authorized for internal GIF preview signing; empty disables it.
+    pub gif_media_hosts: Vec<String>,
     /// PostgreSQL database of the message search index; search is disabled without it.
     pub search_database_url: Option<String>,
     /// Rebuild the index from stored history on startup when it is not complete yet.
@@ -100,6 +102,14 @@ impl Config {
             attachment_signing_key: reader.signing_key("ATTACHMENT_SIGNING_KEY"),
             attachment_url_ttl: reader.seconds("ATTACHMENT_URL_TTL_SECONDS", DEFAULT_URL_TTL),
             cors_allowed_origins: reader.origins("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS),
+            gif_media_hosts: reader
+                .value("GIF_MEDIA_HOSTS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_ascii_lowercase)
+                .collect(),
             search_database_url: reader.value("SEARCH_DATABASE_URL"),
             search_backfill_on_start: reader.flag("SEARCH_BACKFILL_ON_START", true),
         };

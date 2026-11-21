@@ -6,8 +6,8 @@ use discordy_messages_application::ports::{AttachmentStorage, Authenticator, Rem
 use discordy_messages_application::use_cases::{
     AcknowledgeMessage, AddReaction, BulkDeleteMessages, CreateMessage, CreateUploadSlots, DeleteMessage, EditMessage,
     GetGuildMessageActivity, GetLastMessageId, GetMessage, GetMessageHistory, GetMessageStats, ListPins,
-    ListReactionUsers, ListReadStates, MessagingPorts, PinMessage, RefreshAttachmentUrls, ReindexSearch,
-    RemoveAllReactions, RemoveOwnReaction, RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
+    ListReactionUsers, ListReadStates, MarkCrossposted, MessagingPorts, PinMessage, RefreshAttachmentUrls,
+    ReindexSearch, RemoveAllReactions, RemoveOwnReaction, RemoveReactions, SearchMessages, UnpinMessage, UpdateCall,
 };
 use subtle::ConstantTimeEq;
 
@@ -44,6 +44,7 @@ pub struct UseCases {
     pub pin: PinMessage,
     pub unpin: UnpinMessage,
     pub update_call: UpdateCall,
+    pub mark_crossposted: MarkCrossposted,
     pub list_pins: ListPins,
     pub acknowledge: AcknowledgeMessage,
     pub upload_slots: CreateUploadSlots,
@@ -73,6 +74,7 @@ impl UseCases {
             pin: PinMessage::new(ports),
             unpin: UnpinMessage::new(ports),
             update_call: UpdateCall::new(ports),
+            mark_crossposted: MarkCrossposted::new(ports),
             list_pins: ListPins::new(ports),
             acknowledge: AcknowledgeMessage::new(ports),
             upload_slots: CreateUploadSlots::new(ports),
@@ -103,6 +105,7 @@ pub struct Shared {
 pub struct AppState {
     shared: Arc<Shared>,
     pub scheduled: Option<Arc<discordy_messages_application::scheduled::ScheduledMessages>>,
+    pub gif_media_hosts: Arc<[String]>,
 }
 
 impl AppState {
@@ -128,7 +131,17 @@ impl AppState {
                 metrics,
             }),
             scheduled: None,
+            gif_media_hosts: Arc::from([]),
         }
+    }
+
+    pub fn with_gif_media_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.gif_media_hosts = hosts
+            .into_iter()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
+        self
     }
 
     pub fn with_scheduled(

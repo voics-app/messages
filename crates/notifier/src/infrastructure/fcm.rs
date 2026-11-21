@@ -218,7 +218,7 @@ pub(crate) fn alert_message(token: &str, alert: &AlertContent, ttl: Duration) ->
     for (key, value) in &alert.data {
         data.insert(key.clone(), json!(value));
     }
-    data.insert("type".to_owned(), json!("message"));
+    data.entry("type".to_owned()).or_insert_with(|| json!("message"));
     json!({"message": {
         "token": token,
         "notification": notification,
@@ -330,6 +330,21 @@ impl PushSender for FcmSender {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn event_alert_keeps_its_type_in_fcm_data() {
+        let alert = crate::domain::AlertContent {
+            title: "Event starting".into(),
+            body: String::new(),
+            thread_id: "1".into(),
+            data: vec![
+                ("type".into(), "scheduled_event".into()),
+                ("dedupe_key".into(), "key".into()),
+            ],
+        };
+        let payload = super::alert_message("token", &alert, std::time::Duration::from_secs(60));
+        assert_eq!(payload["message"]["data"]["type"], "scheduled_event");
+        assert_eq!(payload["message"]["data"]["dedupe_key"], "key");
+    }
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};

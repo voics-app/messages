@@ -27,6 +27,17 @@ pub trait MessageRepository: Send + Sync {
     async fn guild_message_count(&self, guild_id: GuildId, utc_day: i64) -> Result<u64, PortError>;
     /// Timestamp of the marker schema migration; this is not proof of fleet coverage.
     async fn guild_activity_source_initialized_ms(&self) -> Result<Option<u64>, PortError>;
+    /// Atomically stores an opener and its durable marker in the same partition.
+    async fn insert_forum_once(&self, _marker: &Message, _message: &Message) -> Result<bool, PortError> {
+        Err(PortError::new("forum reservation unavailable"))
+    }
+    /// Marker survives deletion of the visible opening message.
+    async fn forum_marker(
+        &self,
+        _channel_id: ChannelId,
+    ) -> Result<Option<(discordy_messages_domain::UserId, MessageId, String)>, PortError> {
+        Err(PortError::new("forum reservation unavailable"))
+    }
 
     /// Overwrites the mutable fields of an existing message.
     async fn update(&self, message: &Message) -> Result<(), PortError>;
@@ -37,9 +48,39 @@ pub trait MessageRepository: Send + Sync {
 
     async fn set_pinned(&self, channel_id: ChannelId, message_id: MessageId, pinned: bool) -> Result<(), PortError>;
 
+    /// Marks an existing message as published without rewriting its mutable body.
+    /// Returns false if the message no longer exists.
+    async fn mark_crossposted(&self, channel_id: ChannelId, message_id: MessageId) -> Result<bool, PortError>;
+
     /// Messages of one bucket: newest first for `Older`, oldest first for
     /// `Newer`.
     async fn scan_bucket(&self, query: BucketQuery) -> Result<Vec<Message>, PortError>;
+
+    /// Exact count in one partition. Adapters may override the paged fallback.
+    async fn count_bucket(&self, channel_id: ChannelId, bucket: Bucket) -> Result<u64, PortError> {
+        let mut count = 0u64;
+        let mut bound = None;
+        loop {
+            let page = self
+                .scan_bucket(BucketQuery {
+                    channel_id,
+                    bucket,
+                    direction: ScanDirection::Newer,
+                    bound,
+                    limit: 100,
+                })
+                .await?;
+            if page.is_empty() {
+                break;
+            }
+            count += page.len() as u64;
+            bound = page.last().map(|m| m.id);
+            if page.len() < 100 {
+                break;
+            }
+        }
+        Ok(count)
+    }
 
     async fn last_message_id(&self, channel_id: ChannelId) -> Result<Option<MessageId>, PortError>;
 

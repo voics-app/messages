@@ -25,6 +25,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p discordy-messages-infrastructure --test scylla_repositories --test scheduled_dispatch -- --test-threads=1
 
+  announcement-scylla-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Exercise publication marker against temporary Scylla
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/announcement-scylla-${{ github.run_id }}-${{ github.run_attempt }}
+          REQUIRE_SCYLLA_CPU: "1"
+        run: cargo test --locked -p discordy-messages-infrastructure --test scylla_repositories -- --nocapture
+
   gitflow:
     if: github.event_name == 'pull_request'
     uses: voics-app/.github/.github/workflows/gitflow-guard.yml@main
