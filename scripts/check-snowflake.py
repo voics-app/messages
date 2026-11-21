@@ -10,7 +10,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "crates" / "snowflake"
-REPOSITORY = "https://github.com/discordy-voics/contracts"
+REPOSITORY = "https://github.com/voics-app/contracts"
 SOURCE = "packages/snowflake"
 FILES = ("Cargo.toml", "README.md", "rustfmt.toml", "src/lib.rs")
 

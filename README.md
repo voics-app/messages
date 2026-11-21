@@ -7,6 +7,9 @@ ScyllaDB buckets, and serves reactions, pins, read states and attachment uploads
 every change to `discordy.message.v1` on Redpanda. Only `standard` delivery-mode channels are
 accepted; other modes get `409` with code `50160`.
 
+Private-thread access is rechecked with the API on every request so a revoked thread membership
+does not remain usable for the normal five-second permission cache lifetime.
+
 ## Endpoints (port 8082)
 
 Public, under `/api/v1` (Bearer JWT or Bot token):
