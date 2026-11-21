@@ -416,10 +416,11 @@ impl ChannelAccessProvider for FakeAccess {
         self.channel.lock().unwrap().clone()
     }
 
-    async fn refresh(&self, _channel_id: ChannelId, _user_id: UserId) -> Result<ChannelAccess, AccessError> {
-        match self.fresh.lock().unwrap().clone() {
+    async fn refresh(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelAccess, AccessError> {
+        let fresh = self.fresh.lock().unwrap().clone();
+        match fresh {
             Some(answer) => answer,
-            None => self.access.lock().unwrap().clone(),
+            None => self.access(channel_id, user_id).await,
         }
     }
 }
