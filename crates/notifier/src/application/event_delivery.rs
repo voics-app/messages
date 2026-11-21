@@ -19,6 +19,89 @@ pub struct EventDelivery {
     pub revision: i64,
 }
 
+#[async_trait]
+pub trait EventDeliveryDirectory: Send + Sync {
+    async fn claim(&self) -> Result<Option<EventDelivery>, PortError>;
+    async fn resolve(&self, delivery: &EventDelivery) -> Result<Option<DeviceToken>, PortError>;
+    /// None acknowledges a terminal result; Some schedules a retry after that many seconds.
+    async fn finish(&self, delivery: &EventDelivery, retry_after_secs: Option<u32>) -> Result<(), PortError>;
+}
+
+pub struct EventDeliveryWorker {
+    directory: Arc<dyn EventDeliveryDirectory>,
+    sender: Arc<dyn PushSender>,
+    registry: Arc<dyn TokenRegistry>,
+}
+
+impl EventDeliveryWorker {
+    pub fn new(
+        directory: Arc<dyn EventDeliveryDirectory>,
+        sender: Arc<dyn PushSender>,
+        registry: Arc<dyn TokenRegistry>,
+    ) -> Self {
+        Self {
+            directory,
+            sender,
+            registry,
+        }
+    }
+
+    pub async fn run(self) {
+        loop {
+            match self.process_one().await {
+                Ok(true) => {}
+                Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
+                Err(error) => {
+                    tracing::warn!(%error, "event reminder delivery unavailable");
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+
+    /// One leased delivery. A crash or a failed acknowledgement leaves it reclaimable after lease expiry.
+    pub async fn process_one(&self) -> Result<bool, PortError> {
+        let Some(delivery) = self.directory.claim().await? else {
+            return Ok(false);
+        };
+        let token = match self.directory.resolve(&delivery).await {
+            Ok(Some(token)) => token,
+            Ok(None) => {
+                self.directory.finish(&delivery, None).await?;
+                return Ok(true);
+            }
+            Err(error) => {
+                self.directory.finish(&delivery, Some(10)).await?;
+                return Err(error);
+            }
+        };
+        let alert = AlertContent {
+            title: "Event starting".into(),
+            body: "An event you are interested in is starting.".into(),
+            thread_id: delivery.delivery_id.clone(),
+            data: vec![
+                ("type".into(), "scheduled_event".into()),
+                ("guild_id".into(), delivery.guild_id.clone()),
+                ("event_id".into(), delivery.event_id.clone()),
+                ("dedupe_key".into(), delivery.delivery_id.clone()),
+            ],
+        };
+        let retry = match self.sender.send(&token, &OutboundPush::Alert(alert)).await {
+            Ok(()) => None,
+            Err(SendError::InvalidToken(_)) => match self.registry.forget(&token).await {
+                Ok(()) => None,
+                Err(_) => Some(10),
+            },
+            Err(SendError::Retry { after, .. }) => {
+                Some(after.map_or(10, |delay| u32::try_from(delay.as_secs()).unwrap_or(60).clamp(1, 60)))
+            }
+            Err(SendError::Failed(_) | SendError::Unsupported(_)) => Some(10),
+        };
+        self.directory.finish(&delivery, retry).await?;
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,88 +192,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*muted.result.lock().unwrap(), vec![None]);
-    }
-}
-
-#[async_trait]
-pub trait EventDeliveryDirectory: Send + Sync {
-    async fn claim(&self) -> Result<Option<EventDelivery>, PortError>;
-    async fn resolve(&self, delivery: &EventDelivery) -> Result<Option<DeviceToken>, PortError>;
-    /// None acknowledges a terminal result; Some schedules a retry after that many seconds.
-    async fn finish(&self, delivery: &EventDelivery, retry_after_secs: Option<u32>) -> Result<(), PortError>;
-}
-
-pub struct EventDeliveryWorker {
-    directory: Arc<dyn EventDeliveryDirectory>,
-    sender: Arc<dyn PushSender>,
-    registry: Arc<dyn TokenRegistry>,
-}
-
-impl EventDeliveryWorker {
-    pub fn new(
-        directory: Arc<dyn EventDeliveryDirectory>,
-        sender: Arc<dyn PushSender>,
-        registry: Arc<dyn TokenRegistry>,
-    ) -> Self {
-        Self {
-            directory,
-            sender,
-            registry,
-        }
-    }
-
-    pub async fn run(self) {
-        loop {
-            match self.process_one().await {
-                Ok(true) => {}
-                Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
-                Err(error) => {
-                    tracing::warn!(%error, "event reminder delivery unavailable");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            }
-        }
-    }
-
-    /// One leased delivery. A crash or a failed acknowledgement leaves it reclaimable after lease expiry.
-    pub async fn process_one(&self) -> Result<bool, PortError> {
-        let Some(delivery) = self.directory.claim().await? else {
-            return Ok(false);
-        };
-        let token = match self.directory.resolve(&delivery).await {
-            Ok(Some(token)) => token,
-            Ok(None) => {
-                self.directory.finish(&delivery, None).await?;
-                return Ok(true);
-            }
-            Err(error) => {
-                self.directory.finish(&delivery, Some(10)).await?;
-                return Err(error);
-            }
-        };
-        let alert = AlertContent {
-            title: "Event starting".into(),
-            body: "An event you are interested in is starting.".into(),
-            thread_id: delivery.delivery_id.clone(),
-            data: vec![
-                ("type".into(), "scheduled_event".into()),
-                ("guild_id".into(), delivery.guild_id.clone()),
-                ("event_id".into(), delivery.event_id.clone()),
-                ("dedupe_key".into(), delivery.delivery_id.clone()),
-            ],
-        };
-        let retry = match self.sender.send(&token, &OutboundPush::Alert(alert)).await {
-            Ok(()) => None,
-            Err(SendError::InvalidToken(_)) => match self.registry.forget(&token).await {
-                Ok(()) => None,
-                Err(_) => Some(10),
-            },
-            Err(SendError::Retry { after, .. }) => {
-                Some(after.map_or(10, |delay| u32::try_from(delay.as_secs()).unwrap_or(60).clamp(1, 60)))
-            }
-            Err(SendError::Failed(_) | SendError::Unsupported(_)) => Some(10),
-        };
-        self.directory.finish(&delivery, retry).await?;
-        Ok(true)
     }
 }
